@@ -32,12 +32,12 @@ class Linear(ComputationNode):
         self.parameters['b'] = jnp.zeros((1,self.output_size))
     @staticmethod
     @jax.jit
-    def __linear_forward(input, W, b):
+    def _linear_forward(input, W, b):
         return input @ W + b
     
     @staticmethod
     @jax.jit
-    def __linear_backward(input, output_grad, W):
+    def _linear_backward(input, output_grad, W):
         dL_dW = input.T @ output_grad
         dL_dinput = output_grad @ W.T
         dL_db = jnp.sum(output_grad, axis=0, keepdims=True)
@@ -45,11 +45,11 @@ class Linear(ComputationNode):
     
     def forward(self, input):
         self.input = input
-        self.output = self.__linear_forward(input, self.parameters['W'], self.parameters['b'])
+        self.output = self._linear_forward(input, self.parameters['W'], self.parameters['b'])
         return self.output
     
     def backward(self, output_grad):
-        self.grad_cache['dL_dW'] ,self.grad_cache['dL_dinput'] ,self.grad_cache['dL_db'] = self.__linear_backward(self.input,output_grad,self.parameters['W'])
+        self.grad_cache['dL_dW'] ,self.grad_cache['dL_dinput'] ,self.grad_cache['dL_db'] = self._linear_backward(self.input,output_grad,self.parameters['W'])
         return self.grad_cache['dL_dinput']
     def weights_var_mean(self):
         return self.parameters['W'].var(), self.parameters['W'].mean()
@@ -115,19 +115,19 @@ class SoftMax(ComputationNode):
         self.use_legacy_backward = use_legacy_backward
     @staticmethod
     @jax.jit
-    def __softmax_forward(input):
+    def _softmax_forward(input):
         inp_exp = jnp.exp(input - jnp.max(input, axis=1, keepdims=True))
         denom = jnp.sum(inp_exp, axis=1, keepdims=True)
         return inp_exp / denom
     @staticmethod
     @jax.jit
-    def __softmax_backward(output, output_grad):
+    def _softmax_backward(output, output_grad):
         return output * (output_grad - jnp.sum(output * output_grad, axis=1, keepdims=True))
     
 
     def forward(self, input):
         self.input = input
-        self.output = self.__softmax_forward(input)
+        self.output = self._softmax_forward(input)
         return self.output
     
     def legacy_jacobian_softmax(self):
@@ -155,5 +155,5 @@ class SoftMax(ComputationNode):
         if self.use_legacy_backward:
             self.grad_cache['dS_dinput'] = self.legacy_jacobian_softmax_v2() 
             self.grad_cache['dL_dinput'] = jnp.einsum('bij,bj->bi', self.grad_cache['dS_dinput'], output_grad)
-        self.grad_cache['dL_dinput'] = self.__softmax_backward(self.output,output_grad)
+        self.grad_cache['dL_dinput'] = self._softmax_backward(self.output,output_grad)
         return self.grad_cache['dL_dinput']

@@ -3,7 +3,8 @@ import abc
 import dataclasses
 import matplotlib.pyplot as plt
 import seaborn as sns
-
+import numpy as np
+import jax.random as jrandom
 @dataclasses.dataclass
 class ComputationNode(abc.ABC):
     
@@ -118,11 +119,227 @@ class ComputationNode(abc.ABC):
         
         plt.tight_layout()
         plt.show()
-    def grad_check(self):
-        if not hasattr(self, 'parameters'):
-            raise ValueError
-        for parameter in self.parameters:
-            pass
+    def grad_check(self, input_data=None, output_grad=None, epsilon=1e-7, threshold=1e-5):
+        """
+        Performs gradient checking on the current layer by comparing analytical gradients 
+        with numerical gradients computed via finite differences.
+        
+        Parameters:
+        - input_data: Optional input data to use for the check. If None, uses the stored input.
+        - output_grad: Optional output gradient to use for the check. If None, uses random gradients.
+        - epsilon: Small perturbation value for finite difference calculation.
+        - threshold: Threshold for relative error to consider gradient check passed.
+        
+        Returns:
+        - dict: Dictionary containing gradient check results for each parameter and input.
+        """
+        
+        if not hasattr(self, 'parameters') and not self.requires_grad:
+            return {"status": "No parameters to check or layer doesn't require gradients"}
+        
+        # Use stored input if not provided
+        if input_data is None:
+            if self.input is None:
+                return {"status": "No input data available. Run forward pass first or provide input_data."}
+            input_data = self.input
+        
+        # Generate random output gradients if not provided
+        if output_grad is None:
+            key = jrandom.PRNGKey(0)
+            # Forward pass to get output shape if needed
+            output = self.forward(input_data)
+            output_grad = jrandom.normal(key, output.shape)
+        
+        # Storage for results
+        results = {}
+        
+        # Run forward and backward passes to get analytical gradients
+        output = self.forward(input_data)
+        self.backward(output_grad)
+        
+        # Check gradients for each parameter
+        if hasattr(self, 'parameters'):
+            for param_name, param_value in self.parameters.items():
+                analytical_grad = self.grad_cache.get(f'dL_d{param_name}')
+                if analytical_grad is None:
+                    results[param_name] = {"status": f"No gradient found for {param_name}"}
+                    continue
+                    
+                # Initialize numerical gradients array
+                numerical_grad = jnp.zeros_like(param_value)
+                
+                # Compute numerical gradient for each element using finite differences
+                it = jnp.nditer(param_value, flags=['multi_index'])
+                while not it.finished:
+                    idx = it.multi_index
+                    
+                    # Save original value
+                    orig_val = param_value[idx].item()
+                    
+                    # Add epsilon
+                    param_value_plus = param_value.at[idx].set(orig_val + epsilon)
+                    self.parameters[param_name] = param_value_plus
+                    output_plus = self.forward(input_data)
+                    loss_plus = jnp.sum(output_plus * output_grad)
+                    
+                    # Subtract epsilon
+                    param_value_minus = param_value.at[idx].set(orig_val - epsilon)
+                    self.parameters[param_name] = param_value_minus
+                    output_minus = self.forward(input_data)
+                    loss_minus = jnp.sum(output_minus * output_grad)
+                    
+                    # Compute numerical gradient
+                    numerical_grad = numerical_grad.at[idx].set((loss_plus - loss_minus) / (2 * epsilon))
+                    
+                    # Restore original value
+                    self.parameters[param_name] = param_value.at[idx].set(orig_val)
+                    
+                    it.iternext()
+                
+                # Compute relative error
+                abs_diff = jnp.abs(analytical_grad - numerical_grad)
+                abs_norm = jnp.maximum(jnp.abs(analytical_grad), jnp.abs(numerical_grad))
+                # Add small constant to avoid division by zero
+                rel_error = jnp.mean(abs_diff / (abs_norm + 1e-10))
+                
+                results[param_name] = {
+                    "analytical_grad": analytical_grad,
+                    "numerical_grad": numerical_grad,
+                    "relative_error": rel_error.item(),
+                    "passed": rel_error < threshold,
+                    "max_abs_diff": jnp.max(abs_diff).item()
+                }
+        
+        # Also check input gradients if required
+        if self.requires_grad:
+            analytical_grad_input = self.grad_cache.get('dL_dinput')
+            if analytical_grad_input is not None:
+                numerical_grad_input = jnp.zeros_like(input_data)
+                
+                # Compute numerical gradient for input
+                it = jnp.nditer(input_data, flags=['multi_index'])
+                while not it.finished:
+                    idx = it.multi_index
+                    
+                    # Save original value
+                    orig_val = input_data[idx].item()
+                    
+                    # Add epsilon
+                    input_data_plus = input_data.at[idx].set(orig_val + epsilon)
+                    output_plus = self.forward(input_data_plus)
+                    loss_plus = jnp.sum(output_plus * output_grad)
+                    
+                    # Subtract epsilon
+                    input_data_minus = input_data.at[idx].set(orig_val - epsilon)
+                    output_minus = self.forward(input_data_minus)
+                    loss_minus = jnp.sum(output_minus * output_grad)
+                    
+                    # Compute numerical gradient
+                    numerical_grad_input = numerical_grad_input.at[idx].set((loss_plus - loss_minus) / (2 * epsilon))
+                    
+                    # Restore original value
+                    input_data = input_data.at[idx].set(orig_val)
+                    
+                    it.iternext()
+                
+                # Compute relative error
+                abs_diff = jnp.abs(analytical_grad_input - numerical_grad_input)
+                abs_norm = jnp.maximum(jnp.abs(analytical_grad_input), jnp.abs(numerical_grad_input))
+                rel_error = jnp.mean(abs_diff / (abs_norm + 1e-10))
+                
+                results["input"] = {
+                    "analytical_grad": analytical_grad_input,
+                    "numerical_grad": numerical_grad_input,
+                    "relative_error": rel_error.item(),
+                    "passed": rel_error < threshold,
+                    "max_abs_diff": jnp.max(abs_diff).item()
+                }
+        
+        # Re-run forward and backward to restore original gradients
+        self.forward(input_data)
+        self.backward(output_grad)
+        
+        # Determine overall status
+        all_passed = all(result.get("passed", False) for result in results.values() if "passed" in result)
+        results["overall_status"] = "PASSED" if all_passed else "FAILED"
+        
+        return results
+    
+    def plot_grad_check_results(self, results):
+        """
+        Visualizes the results of gradient checking.
+        
+        Parameters:
+        - results: Dictionary returned by grad_check method
+        """
+        
+        if "status" in results:
+            print(results["status"])
+            return
+        
+        if "overall_status" not in results:
+            print("No valid gradient check results to visualize")
+            return
+        
+        # Print overall status
+        status_color = "green" if results["overall_status"] == "PASSED" else "red"
+        print(f"Overall Status: \033[1;{92 if status_color == 'green' else 91}m{results['overall_status']}\033[0m")
+        
+        # Count how many plots we need (parameters + input if checked)
+        plot_items = [(name, data) for name, data in results.items() 
+                    if name != "overall_status" and isinstance(data, dict) and "analytical_grad" in data]
+        
+        if not plot_items:
+            print("No gradients to visualize")
+            return
+        
+        # Create figure with subplots
+        fig, axes = plt.subplots(len(plot_items), 3, figsize=(18, 5 * len(plot_items)))
+        
+        # Handle case with only one parameter
+        if len(plot_items) == 1:
+            axes = axes.reshape(1, -1)
+        
+        for i, (name, result) in enumerate(plot_items):
+            if "analytical_grad" not in result:
+                continue
+                
+            analytical = np.array(result["analytical_grad"])
+            numerical = np.array(result["numerical_grad"])
+            
+            # Plot analytical gradient
+            if analytical.ndim <= 2:
+                sns.heatmap(analytical, ax=axes[i, 0], cmap="coolwarm", annot=False)
+            else:
+                axes[i, 0].imshow(analytical[0], cmap="coolwarm")
+            axes[i, 0].set_title(f"{name} - Analytical Gradient")
+            
+            # Plot numerical gradient
+            if numerical.ndim <= 2:
+                sns.heatmap(numerical, ax=axes[i, 1], cmap="coolwarm", annot=False)
+            else:
+                axes[i, 1].imshow(numerical[0], cmap="coolwarm")
+            axes[i, 1].set_title(f"{name} - Numerical Gradient")
+            
+            # Plot absolute difference
+            abs_diff = np.abs(analytical - numerical)
+            if abs_diff.ndim <= 2:
+                im = sns.heatmap(abs_diff, ax=axes[i, 2], cmap="Reds", annot=False)
+            else:
+                im = axes[i, 2].imshow(abs_diff[0], cmap="Reds")
+            axes[i, 2].set_title(f"{name} - Absolute Difference")
+            fig.colorbar(im, ax=axes[i, 2])
+            
+            # Add text with error information
+            rel_error_color = "green" if result["passed"] else "red"
+            axes[i, 2].text(0.5, -0.15, 
+                            f"Relative Error: {result['relative_error']:.6f} ({'PASSED' if result['passed'] else 'FAILED'})", 
+                            transform=axes[i, 2].transAxes,
+                            ha='center', va='center',
+                            color=rel_error_color, fontsize=12, fontweight='bold')
+        
+        plt.tight_layout(h_pad=2.0)
+        plt.show()
 
 
         
