@@ -3,6 +3,7 @@ import jax.random as jrandom
 import jax.numpy as jnp
 import jax
 import time
+from typing import Literal, List, Tuple, Dict, Any
 
 class Linear(ComputationNode):
 
@@ -65,7 +66,68 @@ class Linear(ComputationNode):
         self.parameters['W'] -= lr * self.grad_cache['dL_dW']
         self.parameters['b'] -= lr * self.grad_cache['dL_db']
 
+class Conv2D(ComputationNode):
 
+    def __init__(self, input_channels : int,kernel_size : int | tuple = 3, no_of_filters = 1, stride = 1, pad = None, accumulate_grad_norm = False, accumulate_params = False,seed_key = None, bias = True, initialization = "None"):
+        super().__init__()
+        if seed_key == None:
+            self.seed_key = jrandom.PRNGKey(int(time.time()))
+        self.kernel_size = Conv2D.get_kernel_size(kernel_size)
+        self.input_channels = input_channels
+        self.no_of_filters = no_of_filters
+        self.stride = Conv2D.get_stride(stride)
+        self.pad = pad
+        self.accumulate_grad_norm = accumulate_grad_norm
+        self.accumulate_params = accumulate_params
+        self.initialization = initialization
+        self.parameters = {'W': None, 'b': None}
+        self.bias = bias
+        self.initialize(self.seed_key)
+    @staticmethod
+    def get_kernel_size(kernel_size):
+        if isinstance(kernel_size, int):
+            return (kernel_size, kernel_size)
+        else:
+            return kernel_size
+    @staticmethod
+    def get_stride(stride): 
+        if isinstance(stride, int):
+            return (stride, stride)
+        else:
+            return stride
+
+    def initialize(self, seed_key):
+        if self.initialization == "he":
+            self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1])) * jnp.sqrt(2/(self.no_of_filters * self.kernel_size[0] * self.kernel_size[1]))
+        else:
+            self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1]))
+        if self.bias:
+            self.parameters['b'] = jnp.zeros((1,))
+    @staticmethod
+    def _conv2d_forward(X : jax.Array, W : jax.Array,b : jax.Array, stride : tuple, padding: Literal['VALID','SAME'] = 'VALID'):
+
+        def conv_over_one_batch(X_vec, W_vec, stride, padding):
+
+            if X_vec.ndim == 3:
+                X_vec = X_vec[None,...]
+            cvout = jax.lax.conv_general_dilated(X_vec,W_vec[None,...],window_strides=stride,padding=padding,
+                                                    dimension_numbers=('NCHW','OIHW','NCHW'))[0,0]
+            return cvout
+        convout = jax.vmap(jax.vmap(conv_over_one_batch,in_axes=(None,0,None,None)), in_axes=(0,None,None,None))(X,W,stride,padding)
+        # convout += b[None, :, None, None]
+        return convout
+
+    def forward(self, x, use_legacy_v1 = False, use_legacy_v2 = False):
+        W, b, stride = self.parameters['W'], self.parameters['b'], self.stride
+        with jax.checking_leaks():
+            output = jax.jit(self._conv2d_forward,static_argnames=('stride', 'padding'))(x, W, b, stride)
+        self.input = x
+        self.output = output
+        return self.output
+    def backward(self, out_grad):
+        pass
+
+        
 
 
 #-------------------------------------------------------------------------- ACTIVATION LAYERS -------------------------------------------------------------------------------------------------
