@@ -13,7 +13,7 @@ def get_stride(stride):
         return stride
 
 def _conv2d_forward_legacy_v2(W, x, stride, b = None, pad = 0):
-        no_of_filters, kernel_size_x, kernel_size_y = W.shape
+        no_of_filters,input_channels, kernel_size_x, kernel_size_y = W.shape
         batch_size, input_channels, input_x, input_y = x.shape
         output_x = (input_x - kernel_size_x)//stride[0] + 1
         output_y = (input_y - kernel_size_y)//stride[1] + 1
@@ -35,12 +35,12 @@ def _conv2d_forward_legacy_v2(W, x, stride, b = None, pad = 0):
             kernel_size_y
         )
         x_strided_view = np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
-        conv_out = np.einsum('bchwkl,fkl->bfhw', x_strided_view, W, optimize=True)
-        conv_out += b
+        conv_out = np.einsum('bchwkl,fikl->bfhw', x_strided_view, W, optimize=True)
+        conv_out += b[None, :, None, None]
         return conv_out
 
 def _conv2d_forward_legacy_v1(W, x, stride, b = None,pad = 0):
-        no_of_filters, kernel_size_x, kernel_size_y = W.shape
+        no_of_filters,input_channels, kernel_size_x, kernel_size_y = W.shape
         batch_size, input_channels, input_x, input_y = x.shape
         
         output_x = (input_x - kernel_size_x)//stride[0] + 1
@@ -54,7 +54,7 @@ def _conv2d_forward_legacy_v1(W, x, stride, b = None,pad = 0):
                         out[batch, filter, i, j] = conv_out + b[filter]
         return out
 
-def _conv2d_backward_legacy_v1(out_grad:np.ndarray, input :np.ndarray, kernel_size :Tuple[int], W :np.ndarray, b :np.ndarray, stride : Tuple[int], pad :int) -> np.ndarray:
+def _conv2d_backward_legacy_v1(out_grad:np.ndarray, input :np.ndarray, kernel_size :Tuple[int], W :np.ndarray, b :np.ndarray, stride : Tuple[int], pad :int = 0) -> np.ndarray:
         batch_size, out_channel, out_h, out_w = out_grad.shape
         dL_dinput = np.zeros_like(input)
         dL_dW = np.zeros_like(W)
@@ -74,19 +74,71 @@ def _conv2d_backward_legacy_v1(out_grad:np.ndarray, input :np.ndarray, kernel_si
                         )
 
                         dL_dW[c] += (
-                            np.sum(input[b, :, h_s:h_e, w_s:w_e] * out_grad[b,c,i,j],axis=0)
+                            input[b, :, h_s:h_e, w_s:w_e] * out_grad[b,c,i,j]
                         )
             dL_db[c] += np.sum(out_grad[b,c,:,:])
         if pad > 0:
             dL_dinput = dL_dinput[:,:,pad:-pad,pad:-pad]
         return dL_dW, dL_db, dL_dinput
 
-def _conv_initialize_legacy(kernel_size, no_of_fileters, initialization, bias = True):
+def _conv2d_backward_legacy_v2(out_grad: np.ndarray, input: np.ndarray, 
+                             kernel_size: Tuple[int], W: np.ndarray, 
+                             b: np.ndarray, stride: Tuple[int], 
+                             pad: int = 0) -> np.ndarray:
+    batch_size, out_channel, out_h, out_w = out_grad.shape
+    in_channel = input.shape[1]
+
+    dL_dinput = np.zeros_like(input)
+    dL_dW = np.zeros_like(W)
+    dL_db = np.zeros_like(b)
+    if pad > 0:
+        dL_dinput_padded = np.zeros((batch_size, in_channel, 
+                                   input.shape[2] + 2*pad, 
+                                   input.shape[3] + 2*pad))
+    else:
+        dL_dinput_padded = dL_dinput
+    dL_db = np.sum(out_grad, axis=(0, 2, 3))
+    kh, kw = kernel_size
+    stride_h, stride_w = stride
+    input_strided = np.lib.stride_tricks.as_strided(
+         input,
+         strides = (
+              input.strides[0],
+              input.strides[2]*stride_h,
+              input.strides[3]*stride_w,
+              input.strides[1],
+              input.strides[2],
+              input.strides[3]
+         ),
+         shape=(
+              batch_size,
+              out_h,
+              out_w,
+              in_channel,
+              kh,
+              kw
+         )
+    )
+    dL_dW = np.einsum('bhwikl,bchw->cikl',input_strided,out_grad,optimize=True)
+    out_grad_up = np.zeros((batch_size,out_channel,out_h*stride_h,out_w*stride_w))
+    out_grad_up[:,:,::stride_h,::stride_w] = out_grad
+    out_grad = np.pad(out_grad_up,((0,0),(0,0),(pad+1,pad+1),(pad+1,pad+1)))
+    W = np.rot90(W,2,axes=(2,3))
+    dL_dinput = np.einsum('bohw,oikl->bihw',out_grad,W,optimize=True)
+    if pad > 0:
+        dL_dinput = dL_dinput_padded[:, :, pad:-pad, pad:-pad]
+    else:
+        dL_dinput = dL_dinput_padded
+
+    return dL_dW, dL_db, dL_dinput
+
+
+def _conv_initialize_legacy(kernel_size, no_of_fileters,input_channels, initialization, bias = True):
      W,b = None,None
      if initialization == "he":
-          W = np.random.randn(no_of_fileters,kernel_size[0],kernel_size[1]) * (2/kernel_size[0]*kernel_size[1]*no_of_fileters)
+          W = np.random.randn(no_of_fileters,input_channels,kernel_size[0],kernel_size[1]) * (2/kernel_size[0]*kernel_size[1]*no_of_fileters)
      else:
-          W = np.random.randn(no_of_fileters,kernel_size[0],kernel_size[1])
+          W = np.random.randn(no_of_fileters,input_channels,kernel_size[0],kernel_size[1])
      if bias:
           b = np.zeros((no_of_fileters,))
      return W,b

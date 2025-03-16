@@ -119,6 +119,26 @@ class ComputationNode(abc.ABC):
         
         plt.tight_layout()
         plt.show()
+    def plot_kernel(self, kernel_index: int, cmap="coolwarm"):
+        """
+        Plots a specific kernel from the Conv2D layer as a heatmap.
+        
+        Args:
+            kernel_index (int): Index of the kernel to plot.
+            cmap (str): Colormap for the heatmap.
+        """
+        if not hasattr(self, 'parameters') or 'W' not in self.parameters:
+            raise ValueError("No kernel weights found in the layer.")
+        
+        kernels = self.parameters['W']
+        if kernel_index < 0 or kernel_index >= kernels.shape[0]:
+            raise ValueError(f"Kernel index {kernel_index} is out of bounds. Expected index between 0 and {kernels.shape[0] - 1}.")
+        
+        kernel = kernels[kernel_index]
+        plt.figure(figsize=(6, 6))
+        sns.heatmap(kernel.squeeze(), cmap=cmap, annot=True, fmt=".2f")
+        plt.title(f"Kernel {kernel_index} Heatmap")
+        plt.show()
     def grad_check(self, input_data=None, output_grad=None, epsilon=1e-7, threshold=1e-5):
         """
         Performs gradient checking on the current layer by comparing analytical gradients 
