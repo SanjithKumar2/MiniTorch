@@ -1,6 +1,7 @@
 from MiniTorch.core.baseclasses import ComputationNode
-from MiniTorch.legacy_utils import _conv2d_backward_legacy_v1, _conv2d_forward_legacy_v2,get_kernel_size,get_stride,_conv2d_forward_legacy_v1,_conv_initialize_legacy
+from MiniTorch.legacy_utils import _conv2d_backward_legacy_v1, _conv2d_forward_legacy_v2,get_kernel_size,get_stride,_conv2d_forward_legacy_v1,_conv_initialize_legacy,_conv2d_backward_legacy_v2, _maxpool2d_backward_legacy_v1,_maxpool2d_forward_legacy_v1
 import numpy as np
+from functools import partial
 import jax.random as jrandom
 import jax.numpy as jnp
 import jax
@@ -23,7 +24,7 @@ class Linear(ComputationNode):
         self.accumulate_grad_norm = accumulate_grad_norm
         self.accumulate_parameters = accumulate_parameters
     
-    def initialize(self, set_bias = False):
+    def initialize(self, seed_key = False, set_bias = False):
         if self.initialization == "xavier":
             limit = jnp.sqrt(6 / (self.input_size + self.output_size))
             self.parameters['W'] = jrandom.uniform(self.seed_key,(self.input_size, self.output_size),minval=-limit,maxval=limit)
@@ -68,9 +69,10 @@ class Linear(ComputationNode):
         self.parameters['W'] -= lr * self.grad_cache['dL_dW']
         self.parameters['b'] -= lr * self.grad_cache['dL_db']
 
+
 class Conv2D(ComputationNode):
 
-    def __init__(self, input_channels : int,kernel_size : int | tuple = 3, no_of_filters = 1, stride = 1, pad = None, accumulate_grad_norm = False, accumulate_params = False,seed_key = None, bias = True, 
+    def __init__(self, input_channels : int,kernel_size : int | tuple = 3, no_of_filters = 1, stride = 1, pad = 0, accumulate_grad_norm = False, accumulate_params = False,seed_key = None, bias = True, 
                  initialization = "None", use_legacy_v1 : bool = False, use_legacy_v2:bool = False):
         super().__init__()
         if seed_key == None:
@@ -89,7 +91,7 @@ class Conv2D(ComputationNode):
         self.use_legacy_v1 = use_legacy_v1
         self.use_legacy_v2 = use_legacy_v2
         if use_legacy_v1 or use_legacy_v2:
-            self.parameters['W'], self.parameters['b'] = _conv_initialize_legacy(self.kernel_size,self.no_of_filters,self.initialization,self.bias)
+            self.parameters['W'], self.parameters['b'] = _conv_initialize_legacy(self.kernel_size,self.no_of_filters,self.input_channels,self.initialization,self.bias)
         else:
             self.initialize(self.seed_key)
     def initialize(self, seed_key):
@@ -98,21 +100,55 @@ class Conv2D(ComputationNode):
         else:
             self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1]))
         if self.bias:
-            self.parameters['b'] = jnp.zeros((1,))
+            self.parameters['b'] = jnp.zeros((self.no_of_filters,))
 
     @staticmethod
-    def _conv2d_forward(X : jax.Array, W : jax.Array,b : jax.Array, stride : tuple, padding: Literal['VALID','SAME'] = 'VALID'):
+    def _conv2d_forward(X : jax.Array, W : jax.Array,b :jax.Array, stride : tuple, padding: Literal['VALID','SAME'] = 'VALID'):
 
-        def conv_over_one_batch(X_vec, W_vec, stride, padding):
+        # def conv_over_one_batch(X_vec, W_vec, stride, padding):
 
-            if X_vec.ndim == 3:
-                X_vec = X_vec[None,...]
-            cvout = jax.lax.conv_general_dilated(X_vec,W_vec[None,...],window_strides=stride,padding=padding,
-                                                    dimension_numbers=('NCHW','OIHW','NCHW'))[0,0]
-            return cvout
-        convout = jax.vmap(jax.vmap(conv_over_one_batch,in_axes=(None,0,None,None)), in_axes=(0,None,None,None))(X,W,stride,padding)
-        convout += b
+        #     if X_vec.ndim == 3:
+        #         X_vec = X_vec[None,...]
+        #     cvout = jax.lax.conv_general_dilated(X_vec,W_vec[None,...],window_strides=stride,padding=padding,
+        #                                             dimension_numbers=('NCHW','OIHW','NCHW'))[0,0]
+        #     return cvout
+        # convout = jax.vmap(jax.vmap(conv_over_one_batch,in_axes=(None,0,None,None)), in_axes=(0,None,None,None))(X,W,stride,padding)
+        convout = jax.lax.conv_general_dilated(
+        lhs=X, 
+        rhs=W, 
+        window_strides=stride, 
+        padding=padding, 
+        dimension_numbers=('NCHW', 'OIHW', 'NCHW')
+        )
+        convout += b[None,:,None,None]
         return convout
+    @staticmethod
+    def _conv2d_backward(X : jax.Array, W : jax.Array, stride : tuple, padding: int, out_grad : jax.Array):
+        dL_db = jnp.sum(out_grad, axis=(0,2,3))
+        in_channel = X.shape[1]
+        batch_size, out_channels, out_h, out_w = out_grad.shape
+        kh, kw = W.shape[2], W.shape[3]
+        dL_dinput = jnp.zeros_like(X)
+        dL_dW = jnp.zeros_like(X)
+
+        input_strided = jax.lax.conv_general_dilated_patches(
+            X,
+            (kh, kw),
+            stride,
+            padding='VALID',
+            dimension_numbers=('NCHW','OIHW','NCHW')
+        )
+        input_strided = input_strided.reshape(batch_size,out_h,out_w,in_channel,kh,kw)
+        input_strided = input_strided.reshape(batch_size, out_h, out_w, in_channel, kh, kw)
+        dL_dW = jnp.einsum('bhwikl,bchw->cikl', input_strided, out_grad, optimize=True)
+
+        out_grad_up = jnp.zeros((batch_size, out_channels, out_h * stride[0], out_w * stride[1]))
+        out_grad_up = out_grad_up.at[:, :, ::stride[0], ::stride[1]].set(out_grad)
+        out_grad_padded = jnp.pad(out_grad_up, ((0, 0), (0, 0), (padding + 1, padding + 1), (padding + 1, padding + 1)))
+        W_rotated = jnp.rot90(W, 2, axes=(2, 3))
+        dL_dinput = jnp.einsum('bohw,oikl->bihw', out_grad_padded, W_rotated, optimize=True)
+
+        return dL_dW, dL_db, dL_dinput
 
     def forward(self, x):
         self.input = x
@@ -126,13 +162,23 @@ class Conv2D(ComputationNode):
             return self.output
         W, b, stride = self.parameters['W'], self.parameters['b'], self.stride
         with jax.checking_leaks():
-            output = jax.jit(Conv2D._conv2d_forward, static_argnames=('stride','padding'))(x, W, b, stride)
+            output = jax.jit(Conv2D._conv2d_forward, static_argnames=('stride','padding'))(x, W,b, stride)            
         self.output = output
         return self.output
     def backward(self, out_grad):
         dL_dW,dL_db,dL_dinput = None,None,None
-        if self.use_legacy_v1 or self.use_legacy_v2:
+        if self.use_legacy_v1:
             dL_dW,dL_db,dL_dinput = _conv2d_backward_legacy_v1(out_grad,self.input,self.kernel_size,self.parameters['W'],self.parameters['b'],self.stride,self.pad)
+        elif self.use_legacy_v2:
+            dL_dW,dL_db,dL_dinput = _conv2d_backward_legacy_v2(out_grad,self.input,self.kernel_size,self.parameters['W'],self.parameters['b'],self.stride,self.pad)
+        else:
+            input, W, b, stride,pad =self.input, self.parameters['W'], self.parameters['b'], self.stride, self.pad
+            if self.pad:
+                input = jnp.pad(self.input,((0,0),(0,0),(self.pad,self.pad),(self.pad,self.pad)))
+            dL_dW,dL_db,dL_dinput = jax.jit(Conv2D._conv2d_backward,static_argnames=('stride','padding'))(input, W, stride, self.pad, out_grad)
+            if self.pad:
+                dL_dinput = dL_dinput[:,:,pad:-pad,pad:-pad]
+
         self.grad_cache['dL_dW'] = dL_dW
         self.grad_cache['dL_db'] = dL_db
         self.grad_cache['dL_dinput'] = dL_dinput
@@ -165,10 +211,10 @@ class Flatten(ComputationNode):
     def forward(self,x):
         self.shape = x.shape
         self.input = x
-        self.output = np.reshape(x,(x.shape[0],-1))
+        self.output = jnp.reshape(x,(x.shape[0],-1))
         return self.output
     def backward(self, output_grad):
-        dL_dinput= np.reshape(output_grad,(self.shape[0],self.shape[1],self.shape[2],self.shape[3]))
+        dL_dinput= jnp.reshape(output_grad,(self.shape[0],self.shape[1],self.shape[2],self.shape[3]))
         self.grad_cache['dL_dinput']  = dL_dinput
         return dL_dinput
     
@@ -178,55 +224,86 @@ class MaxPool2d(ComputationNode):
         self.pool_size = get_kernel_size(pool_size)
         self.stride = get_stride(pool_stride)
         self.use_legacy_v1 = use_legacy_v1
-    @staticmethod
-    def _maxpool2d_forward_legacy_v1(pool_size, stride, input):
-        batch_size, input_channels, H, W = input.shape[0],input.shape[1], input.shape[2], input.shape[3]
-        output_h = (H - pool_size[0])//stride[0] + 1
-        output_w = (W - pool_size[1])//stride[1] + 1
-        output = np.zeros((batch_size,input_channels,output_h,output_w))
-        for b in range(batch_size):
-            for c in range(input_channels):
-                for i in range(output_h):
-                    for j in range(output_w):
-                        h_s = i * stride[0]
-                        h_e = h_s + pool_size[0]
-                        w_s = j * stride[1]
-                        w_e = w_s + pool_size[1]
-                        output[b,c,i,j] = np.max(input[b,c,h_s:h_e,w_s:w_e])
-        return output
-    @staticmethod
-    def _maxpool2d_backward_legacy_v1(pool_size, input, out_grad, stride):
-        batch_size, input_channels = input.shape[0],input.shape[1]
-        out_grad_h, out_grad_w = out_grad.shape[2], out_grad.shape[3]
-        dL_dinput = np.zeros_like(input)
-        for b in range(batch_size):
-            for c in range(input_channels):
-                for i in range(out_grad_h):
-                    for j in range(out_grad_w):
-                        h_s = i * stride[0]
-                        h_e = h_s + pool_size[0]
-                        w_s = j * stride[1]
-                        w_e = w_s + pool_size[1]
-                        window = input[b,c,h_s:h_e,w_s:w_e]
-                        max_ids = np.unravel_index(np.argmax(window),window.shape)
-                        dL_dinput[b,c,h_s + max_ids[0],w_s + max_ids[1]] = out_grad[b,c,i,j]
-        return dL_dinput
+        self.max_indices = None
+        self.requires_grad = False
 
         
-    def forward(self,x):
+    @staticmethod
+    @partial(jax.jit, static_argnums=(0, 1))
+    def _maxpool2d_forward(pool_size, stride, input):
+        batch_size, in_channels, in_h, in_w = input.shape
+        kh, kw = pool_size
+        stride_h, stride_w = stride
+        out_h = (in_h - kh) // stride_h + 1
+        out_w = (in_w - kw) // stride_w + 1
+
+        input_strided = jax.lax.conv_general_dilated_patches(
+            input,
+            filter_shape=(kh, kw),
+            window_strides=(stride_h, stride_w),
+            padding=((0, 0), (0, 0)),
+            dimension_numbers=('NCHW', 'OIHW', 'NCHW')
+        )  # (batch_size, in_channels, out_h, out_w, kh, kw)
+        input_strided = input_strided.reshape(batch_size, in_channels, out_h, out_w, kh, kw)
+        # Compute max and argmax over window dims (kh, kw)
+        output = jnp.max(input_strided, axis=(4, 5))  # (batch_size, in_channels, out_h, out_w)
+        max_indices = jnp.argmax(input_strided.reshape(*input_strided.shape[:4], -1), axis=-1)
+        # (batch_size, in_channels, out_h, out_w) - flat indices in kh*kw
+
+        return output, max_indices
+
+    @staticmethod
+    @partial(jax.jit, static_argnums=(0, 1))
+    def _maxpool2d_backward(pool_size, stride, input, out_grad, max_indices):
+        batch_size, in_channels, in_h, in_w = input.shape
+        kh, kw = pool_size
+        stride_h, stride_w = stride
+        out_h, out_w = out_grad.shape[2], out_grad.shape[3]
+
+        # Convert flat max_indices to 2D offsets within each window
+        max_h_offsets = max_indices // kw  # finds the row offset, wehn you flatten in the forward pass the last two dimensions (kh,kw), the max indices range from (0,kw*kh-1), and you divide by kw to ge the row
+        max_w_offsets = max_indices % kw   # finds the column offset of each index within a kernel, basically modulo by kw gives the column index within the kernel, like if max_idx  = 5 and k_w = 3 then the row_idx = 5//3 = 1 and col_idx 5%3 = 2
+
+        # Compute input positions where max occurred
+        h_starts = jnp.arange(out_h) * stride_h
+        w_starts = jnp.arange(out_w) * stride_w
+        h_pos = h_starts[None, None, :, None] + max_h_offsets[..., None]  # (b, c, h, w, 1)
+        w_pos = w_starts[None, None, :, None] + max_w_offsets[..., None]  # (b, c, h, w, 1)
+
+        # Flatten positions for scattering
+        h_pos = h_pos.reshape(-1)
+        w_pos = w_pos.reshape(-1)
+        batch_idx = jnp.repeat(jnp.arange(batch_size), in_channels * out_h * out_w)
+        chan_idx = jnp.tile(jnp.repeat(jnp.arange(in_channels), out_h * out_w), batch_size)
+        out_grad_flat = out_grad.reshape(-1)
+
+        # Scatter gradients to dL_dinput
+        dL_dinput = jnp.zeros_like(input)
+        indices = (batch_idx, chan_idx, h_pos, w_pos)
+        dL_dinput = dL_dinput.at[indices].add(out_grad_flat)
+
+        return dL_dinput
+
+    def forward(self, x):
         self.input = x
-        output = None
         if self.use_legacy_v1:
-            output = self._maxpool2d_forward_legacy_v1(self.pool_size,self.stride,x)
-        self.output = output
+            output = _maxpool2d_forward_legacy_v1(self.pool_size, self.stride, x)
+            self.output = output
+            self.max_indices = None  # Legacy doesn’t cache indices
+        else:
+            output, max_indices = self._maxpool2d_forward(self.pool_size, self.stride, x)
+            self.output = output
+            self.max_indices = max_indices
         return output
 
     def backward(self, output_grad):
-        dL_dinput = None
         if self.use_legacy_v1:
-            dL_dinput = self._maxpool2d_backward_legacy_v1(self.pool_size,self.input,output_grad,self.stride)
-        self.grad_cache['dL_input'] = dL_dinput
+            dL_dinput = _maxpool2d_backward_legacy_v1(self.pool_size, self.input, output_grad, self.stride)
+        else:
+            dL_dinput = self._maxpool2d_backward(self.pool_size, self.stride, self.input, output_grad, self.max_indices)
+        self.grad_cache = {'dL_input': dL_dinput}  # Assuming ComputationNode expects this
         return dL_dinput
+
 
 
 #-------------------------------------------------------------------------- ACTIVATION LAYERS -------------------------------------------------------------------------------------------------
@@ -273,6 +350,7 @@ class SoftMax(ComputationNode):
 
     def __init__(self, use_legacy_backward = False):
         super().__init__()
+        self.requires_grad = False
         self.use_legacy_backward = use_legacy_backward
     @staticmethod
     @jax.jit

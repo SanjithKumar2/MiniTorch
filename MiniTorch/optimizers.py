@@ -12,6 +12,5 @@ class SGD(Optimizer):
     def step(self, ini_grad):
         self.net.backward(ini_grad)
         for layer in self.net.layers:
-            if isinstance(layer,ComputationNode):
-                if layer.requires_grad:
+            if layer.requires_grad and isinstance(layer,ComputationNode):
                     layer.step(self.lr)

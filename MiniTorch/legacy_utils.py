@@ -11,6 +11,40 @@ def get_stride(stride):
         return (stride, stride)
     else:
         return stride
+    
+
+def _maxpool2d_forward_legacy_v1(pool_size, stride, input):
+    batch_size, input_channels, H, W = input.shape[0],input.shape[1], input.shape[2], input.shape[3]
+    output_h = (H - pool_size[0])//stride[0] + 1
+    output_w = (W - pool_size[1])//stride[1] + 1
+    output = np.zeros((batch_size,input_channels,output_h,output_w))
+    for b in range(batch_size):
+        for c in range(input_channels):
+            for i in range(output_h):
+                for j in range(output_w):
+                    h_s = i * stride[0]
+                    h_e = h_s + pool_size[0]
+                    w_s = j * stride[1]
+                    w_e = w_s + pool_size[1]
+                    output[b,c,i,j] = np.max(input[b,c,h_s:h_e,w_s:w_e])
+    return output
+
+def _maxpool2d_backward_legacy_v1(pool_size, input, out_grad, stride):
+    batch_size, input_channels = input.shape[0],input.shape[1]
+    out_grad_h, out_grad_w = out_grad.shape[2], out_grad.shape[3]
+    dL_dinput = np.zeros_like(input)
+    for b in range(batch_size):
+        for c in range(input_channels):
+            for i in range(out_grad_h):
+                for j in range(out_grad_w):
+                    h_s = i * stride[0]
+                    h_e = h_s + pool_size[0]
+                    w_s = j * stride[1]
+                    w_e = w_s + pool_size[1]
+                    window = input[b,c,h_s:h_e,w_s:w_e]
+                    max_ids = np.unravel_index(np.argmax(window),window.shape)
+                    dL_dinput[b,c,h_s + max_ids[0],w_s + max_ids[1]] = out_grad[b,c,i,j]
+    return dL_dinput
 
 def _conv2d_forward_legacy_v2(W, x, stride, b = None, pad = 0):
         no_of_filters,input_channels, kernel_size_x, kernel_size_y = W.shape
@@ -109,16 +143,13 @@ def _conv2d_backward_legacy_v2(out_grad: np.ndarray, input: np.ndarray,
               input.strides[1],
               input.strides[2],
               input.strides[3]
-         ),
-         shape=(
+         ),shape=(
               batch_size,
               out_h,
               out_w,
               in_channel,
               kh,
-              kw
-         )
-    )
+              kw) )
     dL_dW = np.einsum('bhwikl,bchw->cikl',input_strided,out_grad,optimize=True)
     out_grad_up = np.zeros((batch_size,out_channel,out_h*stride_h,out_w*stride_w))
     out_grad_up[:,:,::stride_h,::stride_w] = out_grad
