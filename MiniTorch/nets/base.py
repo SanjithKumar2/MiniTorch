@@ -25,7 +25,7 @@ class Net:
                 key = sub_key
         else:
             for idx, key in self.layer_seed_keys.items():
-                self.layers[idx].initialize()
+                self.layers[idx].initialize(key)
 
                 
     def forward(self, input):
