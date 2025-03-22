@@ -7,6 +7,21 @@ import numpy as np
 import jax.random as jrandom
 @dataclasses.dataclass
 class ComputationNode(abc.ABC):
+    '''
+    Abstract base class for computation nodes in a neural network.
+
+    Attributes:
+    input : Input data to the node.
+    output : Output data from the node.
+    seed : Random seed for reproducibility.
+    requires_grad : Boolean indicating if the node requires gradient computation.
+    _grad_norm : Dictionary to store gradient norms.
+    _accum_params : Dictionary to store accumulated parameters.
+    _accum_param_var_mean : Dictionary to store variance and mean of accumulated parameters.
+    grad_cache : Dictionary to cache gradients.
+    accumulate_grad_norm : Boolean indicating if gradient norms should be accumulated.
+    accumulate_parameters : Boolean indicating if parameters should be accumulated.
+    '''
     
     input = None
     output = None
@@ -19,24 +34,55 @@ class ComputationNode(abc.ABC):
     accumulate_grad_norm : bool = False
     accumulate_parameters : bool = False
     def out_var_mean(self):
+        '''
+        Returns the variance and mean of the output.
+
+        Returns:
+        Tuple containing variance and mean of the output.
+        '''
         try:
             return self.output.var(), self.output.mean()
         except Exception as e:
             return "Run the example through the layer"
     def in_var_mean(self):
+        '''
+        Returns the variance and mean of the input.
+
+        Returns:
+        Tuple containing variance and mean of the input.
+        '''
         try:
             return self.input.var(), self.input.mean()
         except Exception as e:
             return "Run the example through the layer"
     def set_seed(self,seed):
+        '''
+        Sets the random seed for the node.
+
+        Parameters:
+        seed : Random seed value.
+        '''
         self.seed = seed
     def _accumulate_grad_norm(self, grad_key):
+        '''
+        Accumulates the gradient norm for a given key.
+
+        Parameters:
+        grad_key : Key for the gradient to accumulate.
+        '''
         if self.accumulate_grad_norm:
             if grad_key not in self._grad_norm:
                 self._grad_norm[grad_key] = []
             self._grad_norm[grad_key].append(jnp.linalg.norm(self.grad_cache[grad_key].flatten()))
 
     def _accumulate_parameters(self, param_key, var_mean_func):
+        '''
+        Accumulates parameters using a variance and mean function.
+
+        Parameters:
+        param_key : Key for the parameter to accumulate.
+        var_mean_func : Function to compute variance and mean.
+        '''
         if self.accumulate_parameters:
             if param_key not in self._accum_param_var_mean:
                 self._accum_param_var_mean[param_key] = {'var': [], 'mean': []}
@@ -44,6 +90,9 @@ class ComputationNode(abc.ABC):
             self._accum_param_var_mean[param_key]['var'].append(var)
             self._accum_param_var_mean[param_key]['mean'].append(mean)
     def plot_out(self):
+        '''
+        Plots a heatmap of the output for the first sample in the batch.
+        '''
         """Plots a heatmap of the output for the first sample in the batch."""
         output = self.output[0] if self.output.ndim == 3 else self.output
         plt.figure(figsize=(12, 5))

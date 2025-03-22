@@ -1,19 +1,51 @@
 import numpy as np
 from typing import Tuple
 
+# Returns the kernel size as a tuple.
+# Parameters:
+# - kernel_size: An integer or tuple representing the kernel size.
 def get_kernel_size(kernel_size):
+    '''
+    Returns the kernel size as a tuple.
+
+    Parameters:
+    kernel_size : An integer or tuple representing the kernel size.
+    '''
     if isinstance(kernel_size, int):
         return (kernel_size, kernel_size)
     else:
         return kernel_size
+
+# Returns the stride as a tuple.
+# Parameters:
+# - stride: An integer or tuple representing the stride.
 def get_stride(stride):
+    '''
+    Returns the stride as a tuple.
+
+    Parameters:
+    stride : An integer or tuple representing the stride.
+    '''
     if isinstance(stride, int):
         return (stride, stride)
     else:
         return stride
     
 
+# Performs the forward pass of a 2D max pooling operation.
+# Parameters:
+# - pool_size: Size of the pooling window.
+# - stride: Stride of the pooling operation.
+# - input: Input data to pool.
 def _maxpool2d_forward_legacy_v1(pool_size, stride, input):
+    '''
+    Performs the forward pass of a 2D max pooling operation.
+
+    Parameters:
+    pool_size : Size of the pooling window.
+    stride : Stride of the pooling operation.
+    input : Input data to pool.
+    '''
     batch_size, input_channels, H, W = input.shape[0],input.shape[1], input.shape[2], input.shape[3]
     output_h = (H - pool_size[0])//stride[0] + 1
     output_w = (W - pool_size[1])//stride[1] + 1
@@ -29,7 +61,22 @@ def _maxpool2d_forward_legacy_v1(pool_size, stride, input):
                     output[b,c,i,j] = np.max(input[b,c,h_s:h_e,w_s:w_e])
     return output
 
+# Performs the backward pass of a 2D max pooling operation.
+# Parameters:
+# - pool_size: Size of the pooling window.
+# - input: Input data to pool.
+# - out_grad: Gradient of the output.
+# - stride: Stride of the pooling operation.
 def _maxpool2d_backward_legacy_v1(pool_size, input, out_grad, stride):
+    '''
+    Performs the backward pass of a 2D max pooling operation.
+
+    Parameters:
+    pool_size : Size of the pooling window.
+    input : Input data to pool.
+    out_grad : Gradient of the output.
+    stride : Stride of the pooling operation.
+    '''
     batch_size, input_channels = input.shape[0],input.shape[1]
     out_grad_h, out_grad_w = out_grad.shape[2], out_grad.shape[3]
     dL_dinput = np.zeros_like(input)
@@ -46,32 +93,49 @@ def _maxpool2d_backward_legacy_v1(pool_size, input, out_grad, stride):
                     dL_dinput[b,c,h_s + max_ids[0],w_s + max_ids[1]] = out_grad[b,c,i,j]
     return dL_dinput
 
+# Performs the forward pass of a 2D convolution operation.
+# Parameters:
+# - W: Weights of the convolutional layer.
+# - x: Input data to convolve.
+# - stride: Stride of the convolution.
+# - b: Optional bias term.
+# - pad: Padding size.
 def _conv2d_forward_legacy_v2(W, x, stride, b = None, pad = 0):
-        no_of_filters,input_channels, kernel_size_x, kernel_size_y = W.shape
-        batch_size, input_channels, input_x, input_y = x.shape
-        output_x = (input_x - kernel_size_x)//stride[0] + 1
-        output_y = (input_y - kernel_size_y)//stride[1] + 1
-        stride_x, stride_y = stride
-        strides = (
-            x.strides[0],
-            x.strides[1],
-            x.strides[2] * stride_x,
-            x.strides[3] * stride_y,
-            x.strides[2],
-            x.strides[3]
-        )
-        shape = (
-            batch_size,
-            input_channels,
-            output_x,
-            output_y,
-            kernel_size_x,
-            kernel_size_y
-        )
-        x_strided_view = np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
-        conv_out = np.einsum('bchwkl,fikl->bfhw', x_strided_view, W, optimize=True)
-        conv_out += b[None, :, None, None]
-        return conv_out
+    '''
+    Performs the forward pass of a 2D convolution operation.
+
+    Parameters:
+    W : Weights of the convolutional layer.
+    x : Input data to convolve.
+    stride : Stride of the convolution.
+    b : Optional bias term.
+    pad : Padding size.
+    '''
+    no_of_filters,input_channels, kernel_size_x, kernel_size_y = W.shape
+    batch_size, input_channels, input_x, input_y = x.shape
+    output_x = (input_x - kernel_size_x)//stride[0] + 1
+    output_y = (input_y - kernel_size_y)//stride[1] + 1
+    stride_x, stride_y = stride
+    strides = (
+        x.strides[0],
+        x.strides[1],
+        x.strides[2] * stride_x,
+        x.strides[3] * stride_y,
+        x.strides[2],
+        x.strides[3]
+    )
+    shape = (
+        batch_size,
+        input_channels,
+        output_x,
+        output_y,
+        kernel_size_x,
+        kernel_size_y
+    )
+    x_strided_view = np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
+    conv_out = np.einsum('bchwkl,fikl->bfhw', x_strided_view, W, optimize=True)
+    conv_out += b[None, :, None, None]
+    return conv_out
 
 def _conv2d_forward_legacy_v1(W, x, stride, b = None,pad = 0):
         no_of_filters,input_channels, kernel_size_x, kernel_size_y = W.shape

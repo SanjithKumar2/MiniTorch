@@ -9,8 +9,30 @@ import time
 from typing import Literal, List, Tuple, Dict, Any
 
 class Linear(ComputationNode):
+    '''
+    Represents a linear layer in a neural network.
+
+    Attributes:
+    input_size : Size of the input features.
+    output_size : Size of the output features.
+    initialization : Method for initializing weights.
+    parameters : Dictionary containing weights and biases.
+    accumulate_grad_norm : Boolean indicating if gradient norms should be accumulated.
+    accumulate_parameters : Boolean indicating if parameters should be accumulated.
+    '''
 
     def __init__(self, input_size, output_size,initialization="None", accumulate_grad_norm : bool = False, accumulate_parameters : bool = False, seed_key : int = None):
+        '''
+        Initializes the linear layer with given input and output sizes, and optional initialization method.
+
+        Parameters:
+        input_size : Size of the input features.
+        output_size : Size of the output features.
+        initialization : Method for initializing weights.
+        accumulate_grad_norm : Boolean indicating if gradient norms should be accumulated.
+        accumulate_parameters : Boolean indicating if parameters should be accumulated.
+        seed_key : Optional seed key for random number generation.
+        '''
         super().__init__()
         if seed_key == None:
             self.seed_key = jrandom.PRNGKey(int(time.time()))
@@ -25,6 +47,13 @@ class Linear(ComputationNode):
         self.accumulate_parameters = accumulate_parameters
     
     def initialize(self, seed_key = False, set_bias = False):
+        '''
+        Initializes the weights and biases of the linear layer.
+
+        Parameters:
+        seed_key : Optional seed key for random number generation.
+        set_bias : Boolean indicating if biases should be set.
+        '''
         if self.initialization == "xavier":
             limit = jnp.sqrt(6 / (self.input_size + self.output_size))
             self.parameters['W'] = jrandom.uniform(self.seed_key,(self.input_size, self.output_size),minval=-limit,maxval=limit)
@@ -37,17 +66,48 @@ class Linear(ComputationNode):
     @staticmethod
     @jax.jit
     def _linear_forward(input, W, b):
+        '''
+        Performs the forward pass of the linear layer.
+
+        Parameters:
+        input : Input data to the layer.
+        W : Weights of the layer.
+        b : Biases of the layer.
+
+        Returns:
+        Output of the linear transformation.
+        '''
         return input @ W + b
     
     @staticmethod
     @jax.jit
     def _linear_backward(input, output_grad, W):
+        '''
+        Performs the backward pass of the linear layer.
+
+        Parameters:
+        input : Input data to the layer.
+        output_grad : Gradient of the output.
+        W : Weights of the layer.
+
+        Returns:
+        Tuple containing gradients with respect to weights, input, and biases.
+        '''
         dL_dW = input.T @ output_grad
         dL_dinput = output_grad @ W.T
         dL_db = jnp.sum(output_grad, axis=0, keepdims=True)
         return dL_dW, dL_dinput, dL_db
     
     def forward(self, input):
+        '''
+        Performs a forward pass through the linear layer.
+
+        Parameters:
+        input : Input data to the layer.
+
+        Returns:
+        Output of the linear transformation.
+        '''
         self.input = input
         self.output = self._linear_forward(input, self.parameters['W'], self.parameters['b'])
         return self.output
@@ -289,7 +349,7 @@ class MaxPool2d(ComputationNode):
         if self.use_legacy_v1:
             output = _maxpool2d_forward_legacy_v1(self.pool_size, self.stride, x)
             self.output = output
-            self.max_indices = None  # Legacy doesn’t cache indices
+            self.max_indices = None  # Legacy doesn't cache indices
         else:
             output, max_indices = self._maxpool2d_forward(self.pool_size, self.stride, x)
             self.output = output
