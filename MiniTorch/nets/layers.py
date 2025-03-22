@@ -60,6 +60,8 @@ class Linear(ComputationNode):
         elif self.initialization == "he":
             std = jnp.sqrt(2 / self.input_size)
             self.parameters['W'] = jrandom.normal(self.seed_key,(self.input_size, self.output_size)) * std
+        elif self.initialization == "uniform":
+            self.parameters['W'] = jrandom.uniform(self.seed_key,(self.input_size, self.output_size),minval=-1/self.input_size,maxval=1/self.output_size)
         else:
             self.parameters['W'] = jrandom.normal(self.seed_key,(self.input_size, self.output_size))
         self.parameters['b'] = jnp.zeros((1,self.output_size))
@@ -155,8 +157,13 @@ class Conv2D(ComputationNode):
         else:
             self.initialize(self.seed_key)
     def initialize(self, seed_key):
+        fan_in = self.input_channels * self.kernel_size[0] * self.kernel_size[1]
+        fan_out = self.no_of_filters * self.kernel_size[0] * self.kernel_size[1]
         if self.initialization == "he":
-            self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1])) * jnp.sqrt(2/(self.no_of_filters * self.kernel_size[0] * self.kernel_size[1]))
+            self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1])) * jnp.sqrt(2/fan_in)
+        if self.initialization == "xavier":
+            std = jnp.sqrt(6/(fan_in + fan_out))
+            self.parameters['W'] = jrandom.uniform(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0],self.kernel_size[1]),minval = -std, maxval=std)
         else:
             self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1]))
         if self.bias:
@@ -260,6 +267,28 @@ class Conv2D(ComputationNode):
         self.parameters['W'] -= lr * self.grad_cache['dL_dW']
         if self.bias:
             self.parameters['b'] -= lr * self.grad_cache['dL_db']
+
+class Dropout(ComputationNode):
+
+    def __init__(self, p):
+        super().__init__()
+        self.p = p
+        self.requires_grad = False
+        self.mask = None
+    def forward(self, x):
+        if self.eval:
+            return x
+        self.input = x
+        key = jax.random.PRNGKey(int(time.time()))
+        mask = jax.random.bernoulli(key, self.p, x.shape).astype(jnp.float32)
+        mask = mask / self.p
+        self.mask = mask
+        self.output = mask * x
+        return self.output
+    
+    def backward(self, output_grad):
+        self.grad_cache['dL_dinput'] = self.mask * output_grad
+        return self.grad_cache['dL_dinput']
 
         
 class Flatten(ComputationNode):
@@ -456,3 +485,43 @@ class SoftMax(ComputationNode):
             self.grad_cache['dL_dinput'] = jnp.einsum('bij,bj->bi', self.grad_cache['dS_dinput'], output_grad)
         self.grad_cache['dL_dinput'] = self._softmax_backward(self.output,output_grad)
         return self.grad_cache['dL_dinput']
+    
+class Sigmoid(ComputationNode):
+
+    def __init__(self):
+        super().__init__()
+        self.requires_grad = False
+
+    def sigmoid(self,x):
+        return 1/(1+jnp.exp(-x))
+    def forward(self, x):
+        self.input = x
+        self.output = self.sigmoid(x)
+        return self.output
+    
+    def backward(self, output_grad):
+        self.grad_cache['dL_dinput'] = (self.output * (1 - self.output)) * output_grad
+        return self.grad_cache['dL_dinput']
+    
+class Tanh(ComputationNode):
+
+    def __init__(self):
+        super().__init__()
+        self.requires_grad = False
+
+    def tanh(self,x):
+        e_pos_x = jnp.exp(x)
+        e_neg_x = jnp.exp(-x)
+        numerator = e_pos_x - e_neg_x
+        denominator = e_neg_x + e_pos_x
+        tanh_res = numerator/denominator
+
+    def forward(self, X):
+        self.input = X
+        self.output = self.tanh(X)
+        return self.output
+    
+    def backward(self, output_grad):
+        self.grad_cache['dL_dinput'] = (1 - jnp.power(self.output,2))*output_grad
+        return self.grad_cache['dL_dinput']
+
