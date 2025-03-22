@@ -180,39 +180,6 @@ class SGD(Optimizer):
     """
 ```
 
-## Usage
-
-To use this framework, you can define a network using the provided layers and train it using the optimizers and loss functions. Here's a simple example:
-
-```python
-from MiniTorch.nets.base import Net
-from MiniTorch.nets.layers import Linear, ReLU
-from MiniTorch.core.baseclasses import Loss, Optimizer
-
-# Define a simple network
-layers = [Linear(784, 128), ReLU(), Linear(128, 10)]
-network = Net(layers)
-
-# Define a loss function and optimizer
-loss_fn = Loss()
-optimizer = Optimizer()
-
-# Training loop
-for epoch in range(num_epochs):
-    # Forward pass
-    outputs = network.forward(inputs)
-    loss = loss_fn.loss(outputs, targets)
-
-    # Backward pass
-    grads = network.backward(loss)
-
-    # Update weights
-    optimizer.step()
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a pull request or open an issue.
 
 ## License
 
