@@ -360,9 +360,17 @@ class ComputationNode(abc.ABC):
         
         plt.tight_layout(h_pad=2.0)
         plt.show()
+    def get_svd(self):
+        '''No idea where to put this function, for now here'''
+        if self.__class__.__name__ == 'Linear':
+            U, S, Vt = jnp.linalg.svd(self.W)
+            print(f'Singular values of Linear_layer Weights -> {S}')
+        elif self.__class__.__name__ == 'Conv2D':
+            W = self.parameters['W']
+            W = jnp.reshape(W,(W.shape[0],-1))
+            U,S,vt = jnp.linalg.svd(W)
+            print(f'Singular values of Conv2D_layer Kernels -> {S}')
 
-
-        
     @abc.abstractmethod
     def forward(self, input):
         raise NotImplementedError
