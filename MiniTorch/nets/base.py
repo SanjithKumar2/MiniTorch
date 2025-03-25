@@ -105,3 +105,7 @@ class Net:
                 print(f"------------------- {layer.__class__.__name__} {n_layers - idx} --------------------")
                 for grad_name, grad in layer.grad_cache.items():
                     print(f"Grad {grad_name} Variance and Mean -> {float(grad.var())} , {float(grad.mean())}")
+    
+    def plot_backprop_grad_dist(self):
+        for layer in self.layers[::-1]:
+            layer.plot_grad_dist()

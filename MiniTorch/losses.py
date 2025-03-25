@@ -48,3 +48,23 @@ class CCE(Loss):
         epsilon = 1e-9
         self.grad_cache['dL_dpred'] = -true / (pred + epsilon)
         return self.grad_cache['dL_dpred']
+    
+class MSE(Loss):
+    def __init__(self):
+        super().__init__()
+
+    def loss(self, pred, true):
+        self.input = (pred,true)
+        batch_size = pred.shape[0]
+        loss = np.sum(np.pow(pred-true,2))/batch_size
+        return loss
+    
+    def backward(self, loss = None, make_safe = False):
+        pred, true = self.input
+        if make_safe:
+            pred = np.nan_to_num(pred)
+        grad = 2/pred.shape[0] * (pred-true)
+        if make_safe:
+            grad = np.nan_to_num(grad)
+        self.grad_cache['dL_dpred'] = grad
+        return self.grad_cache['dL_dpred']

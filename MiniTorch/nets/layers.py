@@ -240,6 +240,7 @@ class Conv2D(ComputationNode):
             dL_dW,dL_db,dL_dinput = _conv2d_backward_legacy_v2(out_grad,self.input,self.kernel_size,self.parameters['W'],self.parameters['b'],self.stride,self.pad)
         else:
             input, W, b, stride,pad =self.input, self.parameters['W'], self.parameters['b'], self.stride, self.pad
+            
             if self.pad:
                 input = jnp.pad(self.input,((0,0),(0,0),(self.pad,self.pad),(self.pad,self.pad)))
             dL_dW,dL_db,dL_dinput = jax.jit(Conv2D._conv2d_backward,static_argnames=('stride','padding'))(input, W, stride, self.pad, out_grad)
