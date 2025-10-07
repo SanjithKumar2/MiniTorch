@@ -33,6 +33,7 @@ class ComputationNode(abc.ABC):
     grad_cache : dict = dataclasses.field(default_factory=lambda : {})
     accumulate_grad_norm : bool = False
     accumulate_parameters : bool = False
+    
     def out_var_mean(self):
         '''
         Returns the variance and mean of the output.

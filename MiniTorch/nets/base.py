@@ -109,3 +109,31 @@ class Net:
     def plot_backprop_grad_dist(self):
         for layer in self.layers[::-1]:
             layer.plot_grad_dist()
+
+    def save_model(self, path="model.pkl"):
+        import pickle
+        import jax
+        try:
+            state = []
+            for layer in self.layers:
+                if hasattr(layer, "parameters"):
+                    encoded = {k: jax.device_get(v) for k, v in layer.parameters.items()}
+                    state.append(encoded)
+                else:
+                    state.append(None)
+            with open(path, "wb") as f:
+                pickle.dump(state, f)
+        except Exception as e:
+            print(f"Failed to save model {e}")
+    
+    def load_model(self,path="model.pkl"):
+        import pickle
+        import jax.numpy as jnp
+        try:
+            with open(path, "rb") as f:
+                state = pickle.load(f)
+            for layer, params in zip(self.layers, state):
+                if params is not None:
+                    layer.parameters = {k: jnp.array(v) for k, v in params.items()}
+        except Exception as e:
+            print(f"Failed to save model {e}")

@@ -1,5 +1,6 @@
 from MiniTorch.core.baseclasses import ComputationNode
 from MiniTorch.legacy_utils import _conv2d_backward_legacy_v1, _conv2d_forward_legacy_v2,get_kernel_size,get_stride,_conv2d_forward_legacy_v1,_conv_initialize_legacy,_conv2d_backward_legacy_v2, _maxpool2d_backward_legacy_v1,_maxpool2d_forward_legacy_v1
+from MiniTorch.inference.lrp_rules import get_lrp_
 import numpy as np
 from functools import partial
 import jax.random as jrandom
@@ -21,7 +22,7 @@ class Linear(ComputationNode):
     accumulate_parameters : Boolean indicating if parameters should be accumulated.
     '''
 
-    def __init__(self, input_size, output_size,initialization="None", accumulate_grad_norm : bool = False, accumulate_parameters : bool = False, seed_key : int = None):
+    def __init__(self, input_size, output_size,initialization="None", accumulate_grad_norm : bool = False, accumulate_parameters : bool = False, seed_key : int = None, bias=True):
         '''
         Initializes the linear layer with given input and output sizes, and optional initialization method.
 
@@ -45,6 +46,7 @@ class Linear(ComputationNode):
         self.initialize()
         self.accumulate_grad_norm = accumulate_grad_norm
         self.accumulate_parameters = accumulate_parameters
+        self.bias = bias
     
     def initialize(self, seed_key = False, set_bias = False):
         '''
@@ -100,6 +102,14 @@ class Linear(ComputationNode):
         dL_db = jnp.sum(output_grad, axis=0, keepdims=True)
         return dL_dW, dL_dinput, dL_db
     
+    @staticmethod
+    @jax.jit
+    def _lrp_backward_0_rule(input, R_out, W):
+        z = (input @ W) + 1e-9
+        numerator = input.T * W
+        R_in = jnp.sum((numerator/z)*R_out,axis=1,keepdims=True).T
+        return R_in
+
     def forward(self, input):
         '''
         Performs a forward pass through the linear layer.
@@ -117,6 +127,10 @@ class Linear(ComputationNode):
     def backward(self, output_grad):
         self.grad_cache['dL_dW'] ,self.grad_cache['dL_dinput'] ,self.grad_cache['dL_db'] = self._linear_backward(self.input,output_grad,self.parameters['W'])
         return self.grad_cache['dL_dinput']
+    def lrp_backward(self, R_out,rule_type="0",bias=False,**kwargs):
+        lrp_rule = get_lrp_(self, rule_type, bias)
+        R_in = lrp_rule(input = self.input, R_out = R_out, W = self.parameters['W'], b = self.parameters['b'], **kwargs)
+        return R_in
     def weights_var_mean(self):
         return self.parameters['W'].var(), self.parameters['W'].mean()
     def bias_var_mean(self):
@@ -129,7 +143,8 @@ class Linear(ComputationNode):
         if self.accumulate_parameters:
             self._accumulate_parameters('dL_dW', self.weights_var_mean)
         self.parameters['W'] -= lr * self.grad_cache['dL_dW']
-        self.parameters['b'] -= lr * self.grad_cache['dL_db']
+        if self.bias:
+            self.parameters['b'] -= lr * self.grad_cache['dL_db']
 
 
 class Conv2D(ComputationNode):
@@ -413,6 +428,9 @@ class ReLU(ComputationNode):
         dL_dinput = output_grad * (self.input > 0).astype(float)
         self.grad_cache['dL_dinput'] = dL_dinput
         return self.grad_cache['dL_dinput']
+    
+    def lrp_backward(self, R_out):
+        return R_out * (self.input > 0)
 
 class PReLU(ComputationNode):
 
