@@ -1,6 +1,5 @@
 from MiniTorch.core.baseclasses import ComputationNode
 from MiniTorch.legacy_utils import _conv2d_backward_legacy_v1, _conv2d_forward_legacy_v2,get_kernel_size,get_stride,_conv2d_forward_legacy_v1,_conv_initialize_legacy,_conv2d_backward_legacy_v2, _maxpool2d_backward_legacy_v1,_maxpool2d_forward_legacy_v1
-from MiniTorch.inference.lrp_rules import get_lrp_
 import numpy as np
 from functools import partial
 import jax.random as jrandom
@@ -102,14 +101,6 @@ class Linear(ComputationNode):
         dL_db = jnp.sum(output_grad, axis=0, keepdims=True)
         return dL_dW, dL_dinput, dL_db
     
-    @staticmethod
-    @jax.jit
-    def _lrp_backward_0_rule(input, R_out, W):
-        z = (input @ W) + 1e-9
-        numerator = input.T * W
-        R_in = jnp.sum((numerator/z)*R_out,axis=1,keepdims=True).T
-        return R_in
-
     def forward(self, input):
         '''
         Performs a forward pass through the linear layer.
@@ -128,7 +119,9 @@ class Linear(ComputationNode):
         self.grad_cache['dL_dW'] ,self.grad_cache['dL_dinput'] ,self.grad_cache['dL_db'] = self._linear_backward(self.input,output_grad,self.parameters['W'])
         return self.grad_cache['dL_dinput']
     def lrp_backward(self, R_out,rule_type="0",bias=False,**kwargs):
+        from MiniTorch.inference.lrp_rules import get_lrp_
         lrp_rule = get_lrp_(self, rule_type, bias)
+        print(rule_type,bias,lrp_rule)
         R_in = lrp_rule(input = self.input, R_out = R_out, W = self.parameters['W'], b = self.parameters['b'], **kwargs)
         return R_in
     def weights_var_mean(self):
