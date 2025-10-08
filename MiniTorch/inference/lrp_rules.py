@@ -48,7 +48,6 @@ def _lrp_lin_backward_sp_rule_bias(input, R_out, W, b, w_eps=0.0, z_eps=0.0, **k
     return R_in
 
 #LRP for Conv2D
-@jax.jit
 def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), **kwargs):
     batch, c, h, w = input.shape
     f, _, kh, kw = W.shape
@@ -60,18 +59,41 @@ def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), **kwarg
         for oc in range(f):
             for i in range(oh):
                 for j in range(ow):
-                    inp_path = input[b, :, i*stride_h: (i*stride_h)+kh, j*stride_w:(j*stride_w)+kw]
+                    inp_patch = input[b, :, i*stride_h: (i*stride_h)+kh, j*stride_w:(j*stride_w)+kw]
                     w = W[oc]
-                    z = jnp.sum(inp_path * w) + 1e-9
+                    z = jnp.sum(inp_patch * w) + 1e-9
                     z += z_eps * jnp.sign(z)
                     for k in range(c):
                         for u in range(kh):
-                            for v in range(kv):
-                                numen = inp_patch[b, c, u, v] * w[c, u, v]
+                            for v in range(kw):
+                                numen = inp_patch[c, u, v] * w[c, u, v]
                                 contrib = (numen/z)*R_out[b, oc, i, j]
                                 R_in = R_in.at[b, k,i*stride_h+u,j*stride_w+v].add(contrib)
     return R_in
-
+def _lrp_conv_backward_zb_rule(input, R_out, W, z_eps=0.0, stride=(1,1),mean=0., std=1., **kwargs):
+    batch, c, h, w = input.shape
+    f, _, kh, kw = W.shape
+    batch, _, oh, ow = R_out.shape
+    stride_h, stride_w = stride
+    R_in = jnp.zeros_like(input)
+    for b in range(batch):
+        for oc in range(f):
+            for i in range(oh):
+                for j in range(ow):
+                    inp_patch = input[b, :, i*stride_h: (i*stride_h)+kh, j*stride_w:(j*stride_w)+kw]
+                    w = W[oc]
+                    w_p = jnp.maximum(0,w)
+                    w_n = jnp.minimum(0,w)
+                    l_patch = jnp.zeros_like(inp_patch) + (0-mean)/std
+                    h_patch = jnp.zeros_like(inp_patch) + (1-mean)/std
+                    z = jnp.sum(inp_patch * w) - jnp.sum(l_patch * w_p) - jnp.sum(h_patch * w_n)
+                    for k in range(c):
+                        for u in range(kh):
+                            for v in range(kw):
+                                numen = (inp_patch[c, u, v] - l_patch[c,u,v]) * w_p[c, u, v] - (h_patch[c,u,v] - inp_patch[c,u,v]) * w_n[c, u, v]
+                                contrib = (numen/z)*R_out[b, oc, i, j]
+                                R_in = R_in.at[b, k,i*stride_h+u,j*stride_w+v].add(contrib)
+    return R_in
 
 def get_lrp_( layer, rule_type=0, bias=False, **kwargs):
     '''
@@ -101,6 +123,8 @@ def get_lrp_( layer, rule_type=0, bias=False, **kwargs):
         pass
     elif isinstance(layer, Conv2D):
         if not bias and rule_type==1:
+            return _lrp_conv_backward_ep_rule
+        if not bias and rule_type==2:
             return _lrp_conv_backward_ep_rule
     else:
         warnings.warn(f"Rule Not available for the {type(layer)} layer")

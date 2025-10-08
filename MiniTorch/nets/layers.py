@@ -318,6 +318,8 @@ class Flatten(ComputationNode):
         dL_dinput= jnp.reshape(output_grad,(self.shape[0],self.shape[1],self.shape[2],self.shape[3]))
         self.grad_cache['dL_dinput']  = dL_dinput
         return dL_dinput
+    def lrp_backward(self, R_out, **kwargs):
+        return jnp.reshape(R_out,(self.shape[0],self.shape[1],self.shape[2],self.shape[3]))
     
 class MaxPool2d(ComputationNode):
     def __init__(self, pool_size, pool_stride, use_legacy_v1 = False):

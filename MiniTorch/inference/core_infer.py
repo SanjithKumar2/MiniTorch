@@ -10,7 +10,7 @@ class LRP:
         for layer, lrp_param in zip(reversed(self.net.layers), self.lrp_params):
             if isinstance(layer, Linear):
                 R = layer.lrp_backward(R,lrp_param["type"], **lrp_param)
-            elif isinstance(layer, ReLU):
+            elif isinstance(layer, ReLU) or isinstance(layer, Flatten):
                 R = layer.lrp_backward(R)
             elif isinstance(layer, Conv2D):
                 R = layer.lrp_backward(R,lrp_param["type"], **lrp_param)
