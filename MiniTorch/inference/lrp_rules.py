@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from MiniTorch.nets.layers import ReLU, Linear
+from MiniTorch.nets.layers import ReLU, Linear, Conv2D
 import warnings
 
 #LRP Rules
@@ -47,7 +47,44 @@ def _lrp_lin_backward_sp_rule_bias(input, R_out, W, b, w_eps=0.0, z_eps=0.0, **k
     R_in = jnp.sum((numerator/z)*R_out,axis=1,keepdims=True).T
     return R_in
 
-def get_lrp_( layer, rule_type=0, bias=False):
+#LRP for Conv2D
+@jax.jit
+def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), **kwargs):
+    batch, c, h, w = input.shape
+    f, _, kh, kw = W.shape
+    batch, _, oh, ow = R_out.shape
+    stride_h, stride_w = stride
+    R_in = jnp.zeros_like(input)
+
+    for b in range(batch):
+        for oc in range(f):
+            for i in range(oh):
+                for j in range(ow):
+                    inp_path = input[b, :, i*stride_h: (i*stride_h)+kh, j*stride_w:(j*stride_w)+kw]
+                    w = W[oc]
+                    z = jnp.sum(inp_path * w) + 1e-9
+                    z += z_eps * jnp.sign(z)
+                    for k in range(c):
+                        for u in range(kh):
+                            for v in range(kv):
+                                numen = inp_patch[b, c, u, v] * w[c, u, v]
+                                contrib = (numen/z)*R_out[b, oc, i, j]
+                                R_in = R_in.at[b, k,i*stride_h+u,j*stride_w+v].add(contrib)
+    return R_in
+
+
+def get_lrp_( layer, rule_type=0, bias=False, **kwargs):
+    '''
+    Returns the appropriate LRP function or call result #FIX: MAKE EVERYTHING RETURN CALL RESULT
+
+    Parameters:
+    layer : ComputationNode -> Any ComputationNode object that supports LRP
+    rule_type: int -> the type of lrp rule to use for a layer
+            0 -> LRP-0 rule
+            1 -> LRP-eps with RMS rule
+            2 -> LRP-zb rule for input pixels
+            Rules change with each layer so be careful about it
+    '''
     if isinstance(layer, Linear):
         if not bias and rule_type==1:
             return _lrp_lin_backward_sp_rule
@@ -62,6 +99,9 @@ def get_lrp_( layer, rule_type=0, bias=False):
             return _dummy_rule
     elif isinstance(layer, ReLU):
         pass
+    elif isinstance(layer, Conv2D):
+        if not bias and rule_type==1:
+            return _lrp_conv_backward_ep_rule
     else:
         warnings.warn(f"Rule Not available for the {type(layer)} layer")
         return _dummy_rule

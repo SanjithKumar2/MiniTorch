@@ -121,7 +121,6 @@ class Linear(ComputationNode):
     def lrp_backward(self, R_out,rule_type="0",bias=False,**kwargs):
         from MiniTorch.inference.lrp_rules import get_lrp_
         lrp_rule = get_lrp_(self, rule_type, bias)
-        print(rule_type,bias,lrp_rule)
         R_in = lrp_rule(input = self.input, R_out = R_out, W = self.parameters['W'], b = self.parameters['b'], **kwargs)
         return R_in
     def weights_var_mean(self):
@@ -259,7 +258,11 @@ class Conv2D(ComputationNode):
         self.grad_cache['dL_db'] = dL_db
         self.grad_cache['dL_dinput'] = dL_dinput
         return dL_dinput
-    
+    def lrp_backward(self, R_out,rule_type="0",bias=False,**kwargs):
+        from MiniTorch.inference.lrp_rules import get_lrp_
+        lrp_rule = get_lrp_(self, rule_type, bias)
+        R_in = lrp_rule(input = self.input, R_out = R_out, W = self.parameters['W'], b = self.parameters['b'], **kwargs)
+        return R_in
     def weights_var_mean(self):
         return self.parameters['W'].var(), self.parameters['W'].mean()
 
