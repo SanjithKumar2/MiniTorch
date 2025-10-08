@@ -66,7 +66,7 @@ def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), **kwarg
                     for k in range(c):
                         for u in range(kh):
                             for v in range(kw):
-                                numen = inp_patch[c, u, v] * w[c, u, v]
+                                numen = inp_patch[k, u, v] * w[k, u, v]
                                 contrib = (numen/z)*R_out[b, oc, i, j]
                                 R_in = R_in.at[b, k,i*stride_h+u,j*stride_w+v].add(contrib)
     return R_in
@@ -90,7 +90,7 @@ def _lrp_conv_backward_zb_rule(input, R_out, W, z_eps=0.0, stride=(1,1),mean=0.,
                     for k in range(c):
                         for u in range(kh):
                             for v in range(kw):
-                                numen = (inp_patch[c, u, v] - l_patch[c,u,v]) * w_p[c, u, v] - (h_patch[c,u,v] - inp_patch[c,u,v]) * w_n[c, u, v]
+                                numen = (inp_patch[k, u, v] - l_patch[k,u,v]) * w_p[k, u, v] - (h_patch[k,u,v] - inp_patch[k,u,v]) * w_n[k, u, v]
                                 contrib = (numen/z)*R_out[b, oc, i, j]
                                 R_in = R_in.at[b, k,i*stride_h+u,j*stride_w+v].add(contrib)
     return R_in

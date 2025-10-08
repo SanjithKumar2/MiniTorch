@@ -168,7 +168,7 @@ class Conv2D(ComputationNode):
         fan_out = self.no_of_filters * self.kernel_size[0] * self.kernel_size[1]
         if self.initialization == "he":
             self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1])) * jnp.sqrt(2/fan_in)
-        if self.initialization == "xavier":
+        elif self.initialization == "xavier":
             std = jnp.sqrt(6/(fan_in + fan_out))
             self.parameters['W'] = jrandom.uniform(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0],self.kernel_size[1]),minval = -std, maxval=std)
         else:
@@ -178,52 +178,62 @@ class Conv2D(ComputationNode):
 
     @staticmethod
     def _conv2d_forward(X : jax.Array, W : jax.Array,b :jax.Array, stride : tuple, padding: Literal['VALID','SAME'] = 'VALID'):
-
-        # def conv_over_one_batch(X_vec, W_vec, stride, padding):
-
-        #     if X_vec.ndim == 3:
-        #         X_vec = X_vec[None,...]
-        #     cvout = jax.lax.conv_general_dilated(X_vec,W_vec[None,...],window_strides=stride,padding=padding,
-        #                                             dimension_numbers=('NCHW','OIHW','NCHW'))[0,0]
-        #     return cvout
-        # convout = jax.vmap(jax.vmap(conv_over_one_batch,in_axes=(None,0,None,None)), in_axes=(0,None,None,None))(X,W,stride,padding)
         convout = jax.lax.conv_general_dilated(
         lhs=X, 
-        rhs=W, 
+        rhs=jnp.transpose(W, (2, 3, 1, 0)), 
         window_strides=stride, 
         padding=padding, 
-        dimension_numbers=('NCHW', 'OIHW', 'NCHW')
+        dimension_numbers=('NCHW', 'HWIO', 'NCHW')
         )
         convout += b[None,:,None,None]
         return convout
+    # @staticmethod
+    # def _conv2d_backward(X : jax.Array, W : jax.Array, stride : tuple, padding: int, out_grad : jax.Array):
+    #     dL_db = jnp.sum(out_grad, axis=(0,2,3))
+    #     in_channel = X.shape[1]
+    #     batch_size, out_channels, out_h, out_w = out_grad.shape
+    #     kh, kw = W.shape[2], W.shape[3]
+
+    #     input_strided = jax.lax.conv_general_dilated_patches(
+    #         X,
+    #         (kh, kw),
+    #         stride,
+    #         padding='VALID',
+    #         dimension_numbers=('NCHW','OIHW','NCHW')
+    #     )
+    #     input_strided = input_strided.reshape(batch_size,out_h,out_w,in_channel,kh,kw)
+    #     input_strided = input_strided.reshape(batch_size, out_h, out_w, in_channel, kh, kw)
+    #     dL_dW = jnp.einsum('bhwikl,bchw->cikl', input_strided, out_grad, optimize=True)
+
+    #     out_grad_up = jnp.zeros((batch_size, out_channels, out_h * stride[0], out_w * stride[1]))
+    #     out_grad_up = out_grad_up.at[:, :, ::stride[0], ::stride[1]].set(out_grad)
+    #     out_grad_padded = jnp.pad(out_grad_up, ((0, 0), (0, 0), (padding + 1, padding + 1), (padding + 1, padding + 1)))
+    #     W_rotated = jnp.rot90(W, 2, axes=(2, 3))
+    #     dL_dinput = jnp.einsum('bohw,oikl->bihw', out_grad_padded, W_rotated, optimize=True)
+
+    #     return dL_dW, dL_db, dL_dinput
     @staticmethod
-    def _conv2d_backward(X : jax.Array, W : jax.Array, stride : tuple, padding: int, out_grad : jax.Array):
-        dL_db = jnp.sum(out_grad, axis=(0,2,3))
-        in_channel = X.shape[1]
-        batch_size, out_channels, out_h, out_w = out_grad.shape
-        kh, kw = W.shape[2], W.shape[3]
-        dL_dinput = jnp.zeros_like(X)
-        dL_dW = jnp.zeros_like(X)
-
-        input_strided = jax.lax.conv_general_dilated_patches(
-            X,
-            (kh, kw),
-            stride,
-            padding='VALID',
-            dimension_numbers=('NCHW','OIHW','NCHW')
+    def _conv2d_backward(X : jax.Array, W : jax.Array, stride : tuple, padding: int|str, out_grad : jax.Array):
+        if isinstance(padding, int):
+            padding = ((padding, padding), (padding, padding))
+        dL_db = jnp.sum(out_grad, axis=(0, 2, 3))
+        kh, kw = W.shape[2:]
+        input_patches = jax.lax.conv_general_dilated_patches(
+            X, (kh, kw), stride, padding
         )
-        input_strided = input_strided.reshape(batch_size,out_h,out_w,in_channel,kh,kw)
-        input_strided = input_strided.reshape(batch_size, out_h, out_w, in_channel, kh, kw)
-        dL_dW = jnp.einsum('bhwikl,bchw->cikl', input_strided, out_grad, optimize=True)
+        input_patches = input_patches.reshape(X.shape[0], out_grad.shape[2], out_grad.shape[3], X.shape[1], kh, kw)
+        out_grad_reshaped = out_grad.transpose(0, 2, 3, 1)
+        dL_dW = jnp.einsum('bhwc,bhwlij->clij', out_grad_reshaped, input_patches)
 
-        out_grad_up = jnp.zeros((batch_size, out_channels, out_h * stride[0], out_w * stride[1]))
-        out_grad_up = out_grad_up.at[:, :, ::stride[0], ::stride[1]].set(out_grad)
-        out_grad_padded = jnp.pad(out_grad_up, ((0, 0), (0, 0), (padding + 1, padding + 1), (padding + 1, padding + 1)))
-        W_rotated = jnp.rot90(W, 2, axes=(2, 3))
-        dL_dinput = jnp.einsum('bohw,oikl->bihw', out_grad_padded, W_rotated, optimize=True)
+        dL_dinput = jax.lax.conv_transpose(
+            out_grad,
+            W.transpose(1,0,2,3),
+            strides=stride,
+            padding=padding,
+            dimension_numbers=('NCHW', 'OIHW', 'NCHW')
+        )
 
         return dL_dW, dL_db, dL_dinput
-
     def forward(self, x):
         self.input = x
         if self.use_legacy_v1:
