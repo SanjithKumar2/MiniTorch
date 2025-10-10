@@ -21,7 +21,7 @@ class Linear(ComputationNode):
     accumulate_parameters : Boolean indicating if parameters should be accumulated.
     '''
 
-    def __init__(self, input_size, output_size,initialization="None", accumulate_grad_norm : bool = False, accumulate_parameters : bool = False, seed_key : int = None, bias=True):
+    def __init__(self, input_size, output_size,initialization="he", accumulate_grad_norm : bool = False, accumulate_parameters : bool = False, seed_key : int = None, bias=True):
         '''
         Initializes the linear layer with given input and output sizes, and optional initialization method.
 
@@ -142,7 +142,7 @@ class Linear(ComputationNode):
 class Conv2D(ComputationNode):
 
     def __init__(self, input_channels : int,kernel_size : int | tuple = 3, no_of_filters = 1, stride = 1, pad = 0, accumulate_grad_norm = False, accumulate_params = False,seed_key = None, bias = True, 
-                 initialization = "None", use_legacy_v1 : bool = False, use_legacy_v2:bool = False):
+                 initialization = "he", use_legacy_v1 : bool = False, use_legacy_v2:bool = False):
         super().__init__()
         if seed_key == None:
             self.seed_key = jrandom.PRNGKey(int(time.time()))
@@ -187,33 +187,9 @@ class Conv2D(ComputationNode):
         )
         convout += b[None,:,None,None]
         return convout
-    # @staticmethod
-    # def _conv2d_backward(X : jax.Array, W : jax.Array, stride : tuple, padding: int, out_grad : jax.Array):
-    #     dL_db = jnp.sum(out_grad, axis=(0,2,3))
-    #     in_channel = X.shape[1]
-    #     batch_size, out_channels, out_h, out_w = out_grad.shape
-    #     kh, kw = W.shape[2], W.shape[3]
 
-    #     input_strided = jax.lax.conv_general_dilated_patches(
-    #         X,
-    #         (kh, kw),
-    #         stride,
-    #         padding='VALID',
-    #         dimension_numbers=('NCHW','OIHW','NCHW')
-    #     )
-    #     input_strided = input_strided.reshape(batch_size,out_h,out_w,in_channel,kh,kw)
-    #     input_strided = input_strided.reshape(batch_size, out_h, out_w, in_channel, kh, kw)
-    #     dL_dW = jnp.einsum('bhwikl,bchw->cikl', input_strided, out_grad, optimize=True)
-
-    #     out_grad_up = jnp.zeros((batch_size, out_channels, out_h * stride[0], out_w * stride[1]))
-    #     out_grad_up = out_grad_up.at[:, :, ::stride[0], ::stride[1]].set(out_grad)
-    #     out_grad_padded = jnp.pad(out_grad_up, ((0, 0), (0, 0), (padding + 1, padding + 1), (padding + 1, padding + 1)))
-    #     W_rotated = jnp.rot90(W, 2, axes=(2, 3))
-    #     dL_dinput = jnp.einsum('bohw,oikl->bihw', out_grad_padded, W_rotated, optimize=True)
-
-    #     return dL_dW, dL_db, dL_dinput
     @staticmethod
-    def _conv2d_backward(X : jax.Array, W : jax.Array, stride : tuple, padding: int|str, out_grad : jax.Array):
+    def _conv2d_backward(X : jax.Array, W : jax.Array, stride : tuple, out_grad : jax.Array, padding: str='VALID'):
         if isinstance(padding, int):
             padding = ((padding, padding), (padding, padding))
         dL_db = jnp.sum(out_grad, axis=(0, 2, 3))
@@ -223,14 +199,13 @@ class Conv2D(ComputationNode):
         )
         input_patches = input_patches.reshape(X.shape[0], out_grad.shape[2], out_grad.shape[3], X.shape[1], kh, kw)
         out_grad_reshaped = out_grad.transpose(0, 2, 3, 1)
-        dL_dW = jnp.einsum('bhwc,bhwlij->clij', out_grad_reshaped, input_patches)
-
+        dL_dW = jnp.einsum('bhwc,bhwlij->clij', out_grad_reshaped, input_patches, optimize=True)
         dL_dinput = jax.lax.conv_transpose(
             out_grad,
-            W.transpose(1,0,2,3),
+            W,
             strides=stride,
             padding=padding,
-            dimension_numbers=('NCHW', 'OIHW', 'NCHW')
+            dimension_numbers=('NCHW', 'IOHW', 'NCHW')
         )
 
         return dL_dW, dL_db, dL_dinput
@@ -260,8 +235,8 @@ class Conv2D(ComputationNode):
             
             if self.pad:
                 input = jnp.pad(self.input,((0,0),(0,0),(self.pad,self.pad),(self.pad,self.pad)))
-            dL_dW,dL_db,dL_dinput = jax.jit(Conv2D._conv2d_backward,static_argnames=('stride','padding'))(input, W, stride, self.pad, out_grad)
-            if self.pad:
+            dL_dW,dL_db,dL_dinput = jax.jit(Conv2D._conv2d_backward,static_argnames=('stride','padding'))(input, W, stride, out_grad, self.pad if self.pad else "VALID")
+            if self.pad and self.pad!='VALID':
                 dL_dinput = dL_dinput[:,:,pad:-pad,pad:-pad]
 
         self.grad_cache['dL_dW'] = dL_dW

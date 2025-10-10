@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Tuple
-
+import jax
 # Returns the kernel size as a tuple.
 # Parameters:
 # - kernel_size: An integer or tuple representing the kernel size.
@@ -227,6 +227,29 @@ def _conv2d_backward_legacy_v2(out_grad: np.ndarray, input: np.ndarray,
 
     return dL_dW, dL_db, dL_dinput
 
+def _conv2d_backward_legacy_v3(X : jax.Array, W : jax.Array, stride : tuple, padding: int, out_grad : jax.Array):
+    dL_db = jnp.sum(out_grad, axis=(0,2,3))
+    in_channel = X.shape[1]
+    batch_size, out_channels, out_h, out_w = out_grad.shape
+    kh, kw = W.shape[2], W.shape[3]
+
+    input_strided = jax.lax.conv_general_dilated_patches(
+        X,
+        (kh, kw),
+        stride,
+        padding='VALID',
+        dimension_numbers=('NCHW','OIHW','NCHW')
+    )
+    input_strided = input_strided.reshape(batch_size,out_h,out_w,in_channel,kh,kw)
+    dL_dW = jnp.einsum('bhwikl,bchw->cikl', input_strided, out_grad, optimize=True)
+
+    out_grad_up = jnp.zeros((batch_size, out_channels, out_h * stride[0], out_w * stride[1]))
+    out_grad_up = out_grad_up.at[:, :, ::stride[0], ::stride[1]].set(out_grad)
+    out_grad_padded = jnp.pad(out_grad_up, ((0, 0), (0, 0), (padding + 1, padding + 1), (padding + 1, padding + 1)))
+    W_rotated = jnp.rot90(W, 2, axes=(2, 3))
+    dL_dinput = jnp.einsum('bohw,oikl,stmn->bimn', out_grad_padded, W_rotated,X, optimize=True)
+
+    return dL_dW, dL_db, dL_dinput
 
 def _conv_initialize_legacy(kernel_size, no_of_fileters,input_channels, initialization, bias = True):
      W,b = None,None
