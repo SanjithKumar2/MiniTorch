@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from MiniTorch.nets.layers import ReLU, Linear, Conv2D
 import warnings
+from MiniTorch.inference.utils import _conv_forward, _conv_transpose
 
 #LRP Rules
 
@@ -48,52 +49,53 @@ def _lrp_lin_backward_sp_rule_bias(input, R_out, W, b, w_eps=0.0, z_eps=0.0, **k
     return R_in
 
 #LRP for Conv2D
-def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), **kwargs):
-    batch, c, h, w = input.shape
-    f, _, kh, kw = W.shape
-    batch, _, oh, ow = R_out.shape
-    stride_h, stride_w = stride
-    R_in = jnp.zeros_like(input)
+def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), padding=0,**kwargs):
+    z = _conv_forward(input,W,stride,padding)
+    z += 1e-12 + z_eps * jnp.sign(z)
+    S = R_out/z
+    S_w = _conv_transpose(S,W,stride,padding)
+    R_in = input * S_w
+    return R_in
 
-    for b in range(batch):
-        for oc in range(f):
-            for i in range(oh):
-                for j in range(ow):
-                    inp_patch = input[b, :, i*stride_h: (i*stride_h)+kh, j*stride_w:(j*stride_w)+kw]
-                    w = W[oc]
-                    z = jnp.sum(inp_patch * w) + 1e-9
-                    z += z_eps * jnp.sign(z)
-                    for k in range(c):
-                        for u in range(kh):
-                            for v in range(kw):
-                                numen = inp_patch[k, u, v] * w[k, u, v]
-                                contrib = (numen/z)*R_out[b, oc, i, j]
-                                R_in = R_in.at[b, k,i*stride_h+u,j*stride_w+v].add(contrib)
+def _lrp_conv_backward_zb_rule(input, R_out, W, stride=(1,1), padding=0, mean=0., std=1., **kwargs):
+    w_p = jnp.maximum(0,W)
+    w_n = jnp.minimum(0,W)
+    L = jnp.zeros_like(inp_patch) + (0.-mean)/std
+    H = jnp.zeros_like(inp_patch) + (1.-mean)/std
+    z = _conv_forward(input, W, stride, padding) - _conv_forward(L, w_p,stride, padding) - _conv_forward(H, w_n,stride, padding) + 1e-12
+    S = R_out/z
+    S_w = _conv_transpose(S, W, stride, padding)
+    S_wp = _conv_transpose(S, w_p, stride, padding)
+    S_wn = _conv_transpose(S, w_n, stride, padding)
+    R_in = input*S_w - L*S_wp - H*S_wn
     return R_in
-def _lrp_conv_backward_zb_rule(input, R_out, W, z_eps=0.0, stride=(1,1),mean=0., std=1., **kwargs):
-    batch, c, h, w = input.shape
-    f, _, kh, kw = W.shape
-    batch, _, oh, ow = R_out.shape
-    stride_h, stride_w = stride
-    R_in = jnp.zeros_like(input)
-    for b in range(batch):
-        for oc in range(f):
-            for i in range(oh):
-                for j in range(ow):
-                    inp_patch = input[b, :, i*stride_h: (i*stride_h)+kh, j*stride_w:(j*stride_w)+kw]
-                    w = W[oc]
-                    w_p = jnp.maximum(0,w)
-                    w_n = jnp.minimum(0,w)
-                    l_patch = jnp.zeros_like(inp_patch) + (0-mean)/std
-                    h_patch = jnp.zeros_like(inp_patch) + (1-mean)/std
-                    z = jnp.sum(inp_patch * w) - jnp.sum(l_patch * w_p) - jnp.sum(h_patch * w_n)
-                    for k in range(c):
-                        for u in range(kh):
-                            for v in range(kw):
-                                numen = (inp_patch[k, u, v] - l_patch[k,u,v]) * w_p[k, u, v] - (h_patch[k,u,v] - inp_patch[k,u,v]) * w_n[k, u, v]
-                                contrib = (numen/z)*R_out[b, oc, i, j]
-                                R_in = R_in.at[b, k,i*stride_h+u,j*stride_w+v].add(contrib)
-    return R_in
+
+
+
+# def _lrp_conv_backward_zb_rule(input, R_out, W, z_eps=0.0, stride=(1,1),mean=0., std=1., **kwargs):
+#     batch, c, h, w = input.shape
+#     f, _, kh, kw = W.shape
+#     batch, _, oh, ow = R_out.shape
+#     stride_h, stride_w = stride
+#     R_in = jnp.zeros_like(input)
+#     for b in range(batch):
+#         for oc in range(f):
+#             for i in range(oh):
+#                 for j in range(ow):
+#                     inp_patch = input[b, :, i*stride_h: (i*stride_h)+kh, j*stride_w:(j*stride_w)+kw]
+#                     w = W[oc]
+#                     w_p = jnp.maximum(0,w)
+#                     w_n = jnp.minimum(0,w)
+#                     l_patch = jnp.zeros_like(inp_patch) + (0-mean)/std
+#                     h_patch = jnp.zeros_like(inp_patch) + (1-mean)/std
+#                     z = jnp.sum(inp_patch * w) - jnp.sum(l_patch * w_p) - jnp.sum(h_patch * w_n)
+#                     for k in range(c):
+#                         for u in range(kh):
+#                             for v in range(kw):
+#                                 numen = (inp_patch[k, u, v] - l_patch[k,u,v]) * w_p[k, u, v] - (h_patch[k,u,v] - inp_patch[k,u,v]) * w_n[k, u, v]
+#                                 contrib = (numen/z)*R_out[b, oc, i, j]
+#                                 R_in = R_in.at[b, k,i*stride_h+u,j*stride_w+v].add(contrib)
+#     return R_in
 
 def get_lrp_( layer, rule_type=0, bias=False, **kwargs):
     '''
