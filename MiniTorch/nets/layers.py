@@ -185,7 +185,8 @@ class Conv2D(ComputationNode):
         padding=padding, 
         dimension_numbers=('NCHW', 'HWIO', 'NCHW')
         )
-        convout += b[None,:,None,None]
+        # if bias:
+        #     convout += b[None,:,None,None]
         return convout
 
     @staticmethod
@@ -221,7 +222,7 @@ class Conv2D(ComputationNode):
             return self.output
         W, b, stride = self.parameters['W'], self.parameters['b'], self.stride
         with jax.checking_leaks():
-            output = jax.jit(Conv2D._conv2d_forward, static_argnames=('stride','padding'))(x, W,b, stride)            
+            output = jax.jit(Conv2D._conv2d_forward, static_argnames=('stride','padding'))(x, W,b, stride, 'VALID')            
         self.output = output
         return self.output
     def backward(self, out_grad):

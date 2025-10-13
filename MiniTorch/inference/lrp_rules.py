@@ -60,8 +60,8 @@ def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), padding
 def _lrp_conv_backward_zb_rule(input, R_out, W, stride=(1,1), padding=0, mean=0., std=1., **kwargs):
     w_p = jnp.maximum(0,W)
     w_n = jnp.minimum(0,W)
-    L = jnp.zeros_like(inp_patch) + (0.-mean)/std
-    H = jnp.zeros_like(inp_patch) + (1.-mean)/std
+    L = jnp.zeros_like(input) + (0.-mean)/std
+    H = jnp.zeros_like(input) + (1.-mean)/std
     z = _conv_forward(input, W, stride, padding) - _conv_forward(L, w_p,stride, padding) - _conv_forward(H, w_n,stride, padding) + 1e-12
     S = R_out/z
     S_w = _conv_transpose(S, W, stride, padding)
@@ -125,9 +125,10 @@ def get_lrp_( layer, rule_type=0, bias=False, **kwargs):
         pass
     elif isinstance(layer, Conv2D):
         if not bias and rule_type==1:
+            from MiniTorch.inference.legacy import _lrp_conv_backward_ep_rule
             return _lrp_conv_backward_ep_rule
         if not bias and rule_type==2:
-            return _lrp_conv_backward_ep_rule
+            return _lrp_conv_backward_zb_rule
     else:
         warnings.warn(f"Rule Not available for the {type(layer)} layer")
         return _dummy_rule
