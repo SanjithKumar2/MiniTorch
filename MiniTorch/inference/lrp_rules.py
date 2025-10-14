@@ -3,7 +3,8 @@ import jax.numpy as jnp
 from MiniTorch.nets.layers import ReLU, Linear, Conv2D
 import warnings
 from MiniTorch.inference.utils import _conv_forward, _conv_transpose
-
+import torch
+import torch.nn.functional as F
 #LRP Rules
 
 #Dummy Rule
@@ -53,9 +54,10 @@ def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), padding
     z = _conv_forward(input,W,stride,padding)
     z += 1e-12 + z_eps * jnp.sign(z)
     S = R_out/z
-    S_w = _conv_transpose(S,W,stride,padding)
+    input, S, W = torch.tensor(input), torch.tensor(S), torch.tensor(W)
+    S_w = F.conv_transpose2d(S,W,stride=stride,padding=padding)
     R_in = input * S_w
-    return R_in
+    return jnp.array(R_in.numpy())
 
 def _lrp_conv_backward_zb_rule(input, R_out, W, stride=(1,1), padding=0, mean=0., std=1., **kwargs):
     w_p = jnp.maximum(0,W)
@@ -64,11 +66,12 @@ def _lrp_conv_backward_zb_rule(input, R_out, W, stride=(1,1), padding=0, mean=0.
     H = jnp.zeros_like(input) + (1.-mean)/std
     z = _conv_forward(input, W, stride, padding) - _conv_forward(L, w_p,stride, padding) - _conv_forward(H, w_n,stride, padding) + 1e-12
     S = R_out/z
-    S_w = _conv_transpose(S, W, stride, padding)
-    S_wp = _conv_transpose(S, w_p, stride, padding)
-    S_wn = _conv_transpose(S, w_n, stride, padding)
+    input, S, W, w_p, w_n, L, H = torch.tensor(input), torch.tensor(S), torch.tensor(W), torch.tensor(w_p),torch.tensor(w_n),torch.tensor(L),torch.tensor(H)
+    S_w = F.conv_transpose2d(S, W, stride=stride, padding=padding)
+    S_wp = F.conv_transpose2d(S, w_p, stride=stride, padding=padding)
+    S_wn = F.conv_transpose2d(S, w_n, stride=stride, padding=padding)
     R_in = input*S_w - L*S_wp - H*S_wn
-    return R_in
+    return jnp.array(R_in.numpy())
 
 
 
@@ -125,7 +128,7 @@ def get_lrp_( layer, rule_type=0, bias=False, **kwargs):
         pass
     elif isinstance(layer, Conv2D):
         if not bias and rule_type==1:
-            from MiniTorch.inference.legacy import _lrp_conv_backward_ep_rule
+            # from MiniTorch.inference.legacy import _lrp_conv_backward_ep_rule
             return _lrp_conv_backward_ep_rule
         if not bias and rule_type==2:
             return _lrp_conv_backward_zb_rule
