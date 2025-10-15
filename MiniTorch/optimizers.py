@@ -38,5 +38,37 @@ class SGD(Optimizer):
         '''
         self.net.backward(ini_grad)
         for layer in self.net.layers:
-            if layer.requires_grad and isinstance(layer,ComputationNode):
-                    layer.step(self.lr)
+            if hasattr(layer,"parameters") and isinstance(layer,ComputationNode):
+                    for key, val in layer.parameters:
+                        if val.requires_grad:
+                            layer.parameters[key].param -= self.lr * val.grad
+
+class AdaGrad(Optimizer):
+
+    def __init__(self, lr, net: Net, epsilon=1e-8):
+        super().__init__()
+        self.lr = lr
+        self.net = net
+        self.epsilon = epsilon
+    
+    def step(self, ini_grad):
+        self.net.backward(ini_grad)
+        for layer in self.net.layers:
+            if hasattr(layer, "parameters") and isinstance(layer, ComputationNode):
+                for key, val in layer.parameters.items():
+                    if val.requires_grad:
+                        if not hasattr(val, "sum_sqr_grad"):
+                            val.sum_sqr_grad = jnp.zeros_like(val.grad)
+                        val.sum_sqr_grad += val.grad ** 2
+                        val.param -= (self.lr / (jnp.sqrt(val.sum_sqr_grad) + self.epsilon)) * val.grad
+
+    def clear(self):
+        for layer in self.net.layers:
+            if hasattr(layer,"parameters") and isinstance(layer,ComputationNode):
+                for key, val in layer.parameters.items():
+                    if hasattr(val, "sum_sqr_grad"):
+                        delattr(val, "sum_sqr_grad")
+
+
+
+    

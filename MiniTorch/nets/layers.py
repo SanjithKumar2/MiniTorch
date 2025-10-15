@@ -104,11 +104,12 @@ class Linear(ComputationNode):
         Output of the linear transformation.
         '''
         self.input = input
-        self.output = self._linear_forward(input, self.parameters['W'], self.parameters['b'])
+        self.output = self._linear_forward(input, self.parameters['W'].param, self.parameters['b'].param)
         return self.output
     
     def backward(self, output_grad):
-        self.grad_cache['dL_dW'] ,self.grad_cache['dL_dinput'] ,self.grad_cache['dL_db'] = self._linear_backward(self.input,output_grad,self.parameters['W'])
+        # self.grad_cache['dL_dW'] ,self.grad_cache['dL_dinput'] ,self.grad_cache['dL_db'] = self._linear_backward(self.input,output_grad,self.parameters['W'].param)
+        self.parameters['W'].grad ,self.grad_cache['dL_dinput'] ,self.parameters['b'].grad = self._linear_backward(self.input,output_grad,self.parameters['W'].param)
         return self.grad_cache['dL_dinput']
     def lrp_backward(self, R_out,rule_type="0",bias=False,**kwargs):
         from MiniTorch.inference.lrp_rules import get_lrp_
@@ -120,7 +121,7 @@ class Linear(ComputationNode):
     def bias_var_mean(self):
         return self.parameters['b'].var(), self.parameters['b'].mean()
     
-    def step(self, lr):
+    def step(self, lr): #FIX : No longer used during updates do something else for grad_norm and param accum if necessary
         if self.accumulate_grad_norm:
             self._accumulate_grad_norm('dL_dW')
             self._accumulate_grad_norm('dL_db')
@@ -198,13 +199,13 @@ class Conv2D(ComputationNode):
         self.input = x
         if self.use_legacy_v1:
             x = np.pad(x,((0,0),(0,0),(self.pad,self.pad),(self.pad,self.pad)))
-            self.output = _conv2d_forward_legacy_v1(self.parameters['W'], x, self.stride, self.parameters['b'])
+            self.output = _conv2d_forward_legacy_v1(self.parameters['W'].param, x, self.stride, self.parameters['b'].param)
             return self.output
         if self.use_legacy_v2:
             x = np.pad(x,((0,0),(0,0),(self.pad,self.pad),(self.pad,self.pad)))
-            self.output = _conv2d_forward_legacy_v2(self.parameters['W'], x, self.stride, self.parameters['b'])
+            self.output = _conv2d_forward_legacy_v2(self.parameters['W'].param, x, self.stride, self.parameters['b'].param)
             return self.output
-        W, b, stride = self.parameters['W'], self.parameters['b'], self.stride
+        W, b, stride = self.parameters['W'].param, self.parameters['b'].param, self.stride
         with jax.checking_leaks():
             output = jax.jit(Conv2D._conv2d_forward, static_argnames=('stride','padding'))(x, W,b, stride, 'VALID')            
         self.output = output
@@ -212,11 +213,11 @@ class Conv2D(ComputationNode):
     def backward(self, out_grad):
         dL_dW,dL_db,dL_dinput = None,None,None
         if self.use_legacy_v1:
-            dL_dW,dL_db,dL_dinput = _conv2d_backward_legacy_v1(out_grad,self.input,self.kernel_size,self.parameters['W'],self.parameters['b'],self.stride,self.pad)
+            dL_dW,dL_db,dL_dinput = _conv2d_backward_legacy_v1(out_grad,self.input,self.kernel_size,self.parameters['W'].param,self.parameters['b'].param,self.stride,self.pad)
         elif self.use_legacy_v2:
-            dL_dW,dL_db,dL_dinput = _conv2d_backward_legacy_v2(out_grad,self.input,self.kernel_size,self.parameters['W'],self.parameters['b'],self.stride,self.pad)
+            dL_dW,dL_db,dL_dinput = _conv2d_backward_legacy_v2(out_grad,self.input,self.kernel_size,self.parameters['W'].param,self.parameters['b'].param,self.stride,self.pad)
         else:
-            input, W, b, stride,pad =self.input, self.parameters['W'], self.parameters['b'], self.stride, self.pad
+            input, W, b, stride,pad =self.input, self.parameters['W'].param, self.parameters['b'].param, self.stride, self.pad
             
             if self.pad:
                 input = jnp.pad(self.input,((0,0),(0,0),(self.pad,self.pad),(self.pad,self.pad)))
@@ -224,9 +225,11 @@ class Conv2D(ComputationNode):
             if self.pad and self.pad!='VALID':
                 dL_dinput = dL_dinput[:,:,pad:-pad,pad:-pad]
 
-        self.grad_cache['dL_dW'] = dL_dW
-        self.grad_cache['dL_db'] = dL_db
+        # self.grad_cache['dL_dW'] = dL_dW
+        # self.grad_cache['dL_db'] = dL_db
         self.grad_cache['dL_dinput'] = dL_dinput
+        self.parameters['W'].grad = dL_dW
+        self.parameters['b'].grad = dL_db
         return dL_dinput
     def lrp_backward(self, R_out,rule_type="0",bias=False,**kwargs):
         from MiniTorch.inference.lrp_rules import get_lrp_
@@ -239,7 +242,7 @@ class Conv2D(ComputationNode):
     def bias_var_mean(self):
         return self.parameters['b'].var(), self.parameters['b'].mean()
 
-    def step(self, lr):
+    def step(self, lr): #FIX : No longer used during updates do something else for grad_norm and param accum if necessary
         if self.accumulate_grad_norm:
             self._accumulate_grad_norm('dL_dW')
             self._accumulate_grad_norm('dL_db')

@@ -145,6 +145,7 @@ class Parameter:
         import jax.random as jrandom
         self.param=None
         self.grad=None
+        self.requires_grad=True
         if is_bias:
             self.param = jnp.zeros(shape)
             return None
