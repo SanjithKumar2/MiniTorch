@@ -137,3 +137,41 @@ class Net:
                     layer.parameters = {k: jnp.array(v) for k, v in params.items()}
         except Exception as e:
             print(f"Failed to save model {e}")
+
+#TODO : Implememt a New Parameter class that should contain the parameters and corresponding gradients when computed
+class Parameter:
+    def __init__(self, shape : tuple | list, initialization: str, seed_key: int, is_bias:bool=False):
+        import jax.numpy as jnp
+        import jax.random as jrandom
+        self.param=None
+        self.grad=None
+        if is_bias:
+            self.param = jnp.zeros(shape)
+            return None
+        fan_in, fan_out = self._get_fan_in_out(shape)
+        if initialization == "xavier":
+            limit = jnp.sqrt(6 / (fan_in + fan_out))
+            self.param = jrandom.uniform(seed_key,shape,minval=-limit,maxval=limit)
+        elif initialization == "he":
+            std = jnp.sqrt(2 / fan_in)
+            self.param = jrandom.normal(seed_key,shape) * std
+        elif initialization == "uniform":
+            lim = 1.0 / jnp.sqrt(fan_in)
+            self.param = jrandom.uniform(seed_key,shape,minval=-lim,maxval=lim)
+        else:
+            self.param = jrandom.normal(seed_key,shape)
+        
+    def _get_fan_in_out(self, shape):
+        assert hasattr(shape, "__iter__") and (isinstance(shape, list) or isinstance(shape, tuple)), f"The shape must be of type Tuple or List but got {type(shape)}"
+        fan_in, fan_out = 0,0
+        if len(shape) == 2:
+            fan_in, fan_out = shape[0], shape[1]
+        elif len(shape) == 4:
+            '''
+            Expects Kernels to follow (No of filters, input channels, kernel_h, kernel_w)
+            '''
+            NF, IC, KH, KW = shape
+            fan_in =  IC * KH * KW
+            fan_out = NF * KH * KW
+        return fan_in, fan_out
+        

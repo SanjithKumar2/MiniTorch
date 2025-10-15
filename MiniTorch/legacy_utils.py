@@ -260,3 +260,27 @@ def _conv_initialize_legacy(kernel_size, no_of_fileters,input_channels, initiali
      if bias:
           b = np.zeros((no_of_fileters,))
      return W,b
+
+# Legacy Softmax
+
+def legacy_jacobian_softmax(input,output):
+        
+        batch_size, num_classes = input.shape
+        jacobian = jnp.zeros((batch_size,num_classes,num_classes))
+        for b in range(batch_size):
+            for i in range(num_classes):
+                s_i = output[b,i]
+                for j in range(num_classes):
+                    s_j = output[b,j]
+                    if i == j:
+                        jacobian[b, i, j] = s_i * (1 - s_j)
+                    else:
+                        jacobian[b, i, j] = -1 * s_i * s_j
+        return jacobian
+
+def legacy_jacobian_softmax_v2(output):
+        batch_size, classes = output.shape
+        s = output[:,:,None]
+        identity = jnp.eye(classes)[None, :, :]
+        jacobian = s * identity - jnp.einsum('bij,bij->bij', s, s.transpose(0,2,1))
+        return jacobian

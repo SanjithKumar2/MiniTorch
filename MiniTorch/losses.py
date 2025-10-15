@@ -14,7 +14,8 @@ class CCE(Loss):
         Initializes the CCE loss class.
         '''
         super().__init__()
-
+        from MiniTorch.nets.layers import SoftMax
+        self.softmax = SoftMax()
     # Computes the categorical cross-entropy loss.
     # Parameters:
     # - pred: Predicted probabilities.
@@ -29,6 +30,7 @@ class CCE(Loss):
         true : True labels.
         epsilon : Small constant to avoid log(0).
         '''
+        pred = self.softmax.forward(pred)
         self.input = (pred,np.array(true))
         loss = -np.mean(np.sum(true * np.log(pred + epsilon),axis=1))
         self.output = loss
@@ -46,7 +48,7 @@ class CCE(Loss):
         '''
         pred, true = self.input
         epsilon = 1e-9
-        self.grad_cache['dL_dpred'] = -true / (pred + epsilon)
+        self.grad_cache['dL_dpred'] = self.softmax.backward(-true / (pred + epsilon))
         return self.grad_cache['dL_dpred']
     
 class MSE(Loss):

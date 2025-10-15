@@ -1,4 +1,5 @@
 from MiniTorch.core.baseclasses import ComputationNode
+from MiniTorch.nets.base import Parameter
 from MiniTorch.legacy_utils import _conv2d_backward_legacy_v1, _conv2d_forward_legacy_v2,get_kernel_size,get_stride,_conv2d_forward_legacy_v1,_conv_initialize_legacy,_conv2d_backward_legacy_v2, _maxpool2d_backward_legacy_v1,_maxpool2d_forward_legacy_v1
 import numpy as np
 from functools import partial
@@ -55,6 +56,7 @@ class Linear(ComputationNode):
         seed_key : Optional seed key for random number generation.
         set_bias : Boolean indicating if biases should be set.
         '''
+        self.parameters['W'] = Parameter()
         if self.initialization == "xavier":
             limit = jnp.sqrt(6 / (self.input_size + self.output_size))
             self.parameters['W'] = jrandom.uniform(self.seed_key,(self.input_size, self.output_size),minval=-limit,maxval=limit)
@@ -461,31 +463,10 @@ class SoftMax(ComputationNode):
         self.output = self._softmax_forward(input)
         return self.output
     
-    def legacy_jacobian_softmax(self):
-        
-        batch_size, num_classes = self.input.shape
-        jacobian = jnp.zeros((batch_size,num_classes,num_classes))
-        for b in range(batch_size):
-            for i in range(num_classes):
-                s_i = self.output[b,i]
-                for j in range(num_classes):
-                    s_j = self.output[b,j]
-                    if i == j:
-                        jacobian[b, i, j] = s_i * (1 - s_j)
-                    else:
-                        jacobian[b, i, j] = -1 * s_i * s_j
-        return jacobian
-
-    def legacy_jacobian_softmax_v2(self):
-        batch_size, classes = self.output.shape
-        s = self.output[:,:,None]
-        identity = jnp.eye(classes)[None, :, :]
-        jacobian = s * identity - jnp.einsum('bij,bij->bij', s, s.transpose(0,2,1))
-        return jacobian
     def backward(self, output_grad):
-        if self.use_legacy_backward:
-            self.grad_cache['dS_dinput'] = self.legacy_jacobian_softmax_v2() 
-            self.grad_cache['dL_dinput'] = jnp.einsum('bij,bj->bi', self.grad_cache['dS_dinput'], output_grad)
+        # if self.use_legacy_backward:
+        #     self.grad_cache['dS_dinput'] = self.legacy_jacobian_softmax_v2() 
+        #     self.grad_cache['dL_dinput'] = jnp.einsum('bij,bj->bi', self.grad_cache['dS_dinput'], output_grad)
         self.grad_cache['dL_dinput'] = self._softmax_backward(self.output,output_grad)
         return self.grad_cache['dL_dinput']
     
@@ -518,6 +499,7 @@ class Tanh(ComputationNode):
         numerator = e_pos_x - e_neg_x
         denominator = e_neg_x + e_pos_x
         tanh_res = numerator/denominator
+        return tanh_res
 
     def forward(self, X):
         self.input = X
