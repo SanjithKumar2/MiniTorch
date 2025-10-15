@@ -56,18 +56,8 @@ class Linear(ComputationNode):
         seed_key : Optional seed key for random number generation.
         set_bias : Boolean indicating if biases should be set.
         '''
-        self.parameters['W'] = Parameter()
-        if self.initialization == "xavier":
-            limit = jnp.sqrt(6 / (self.input_size + self.output_size))
-            self.parameters['W'] = jrandom.uniform(self.seed_key,(self.input_size, self.output_size),minval=-limit,maxval=limit)
-        elif self.initialization == "he":
-            std = jnp.sqrt(2 / self.input_size)
-            self.parameters['W'] = jrandom.normal(self.seed_key,(self.input_size, self.output_size)) * std
-        elif self.initialization == "uniform":
-            self.parameters['W'] = jrandom.uniform(self.seed_key,(self.input_size, self.output_size),minval=-1/self.input_size,maxval=1/self.output_size)
-        else:
-            self.parameters['W'] = jrandom.normal(self.seed_key,(self.input_size, self.output_size))
-        self.parameters['b'] = jnp.zeros((1,self.output_size))
+        self.parameters['W'] = Parameter((self.input_size, self.output_size), self.initialization, seed_key)
+        self.parameters['b'] = Parameter((1,self.output_size),is_bias=True)
     @staticmethod
     @jax.jit
     def _linear_forward(input, W, b):
@@ -166,17 +156,9 @@ class Conv2D(ComputationNode):
         else:
             self.initialize(self.seed_key)
     def initialize(self, seed_key):
-        fan_in = self.input_channels * self.kernel_size[0] * self.kernel_size[1]
-        fan_out = self.no_of_filters * self.kernel_size[0] * self.kernel_size[1]
-        if self.initialization == "he":
-            self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1])) * jnp.sqrt(2/fan_in)
-        elif self.initialization == "xavier":
-            std = jnp.sqrt(6/(fan_in + fan_out))
-            self.parameters['W'] = jrandom.uniform(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0],self.kernel_size[1]),minval = -std, maxval=std)
-        else:
-            self.parameters['W'] = jrandom.normal(seed_key, (self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1]))
+        self.parameters['W'] = Parameter((self.no_of_filters, self.input_channels, self.kernel_size[0], self.kernel_size[1]),self.initialization, seed_key)
         if self.bias:
-            self.parameters['b'] = jnp.zeros((self.no_of_filters,))
+            self.parameters['b'] = Parameter((self.no_of_filters,), is_bias=True)
 
     @staticmethod
     def _conv2d_forward(X : jax.Array, W : jax.Array,b :jax.Array, stride : tuple, padding: Literal['VALID','SAME'] = 'VALID'):

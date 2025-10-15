@@ -140,7 +140,7 @@ class Net:
 
 #TODO : Implememt a New Parameter class that should contain the parameters and corresponding gradients when computed
 class Parameter:
-    def __init__(self, shape : tuple | list, initialization: str, seed_key: int, is_bias:bool=False):
+    def __init__(self, shape : tuple | list, initialization: str = None, seed_key: int = 0, is_bias:bool=False):
         import jax.numpy as jnp
         import jax.random as jrandom
         self.param=None
