@@ -1,7 +1,7 @@
 from typing import List
 from MiniTorch.core.baseclasses import ComputationNode, Loss
 import jax.random as jrandom
-from MiniTorch.nets.layers import ReLU, Linear, Conv2D, PReLU
+
 
 class Net:
     '''

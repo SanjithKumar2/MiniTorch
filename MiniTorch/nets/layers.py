@@ -380,7 +380,160 @@ class MaxPool2d(ComputationNode):
         self.grad_cache = {'dL_input': dL_dinput}  # Assuming ComputationNode expects this
         return dL_dinput
 
+class RNN(ComputationNode):
+    def __init__(self, hidden_size, embed_dim, batch_size=1, accumulate_grad_norm=False, accumulate_params=False, initialization="xavier", seed_key=None):
+        super().__init__()
+        self.h_size = hidden_size
+        self.emb_size = embed_dim
+        self.batch_size = batch_size
+        self.accumulate_grad_norm = accumulate_grad_norm
+        self.accumulate_params = accumulate_params
+        self.ini = initialization
+        if seed_key == None:
+            self.seed_key = jrandom.PRNGKey(int(time.time()))
+        
+        self.parameters = {
+            'Wx' : None,
+            'Wh' : None,
+            'Wy' : None,
+            'bh' : None,
+            'by' : None
+        }
+        
+        self.tanh = Tanh()
+        self.initialize(self.seed_key)
 
+    def initialize(self, seed_key):
+        import jax.random as jrandom
+        k1, k2, k3 = jrandom.split(seed_key, 3)
+        self.parameters['Wx'] = Parameter((self.emb_size, self.h_size), self.ini, k1)
+        self.parameters['Wh'] = Parameter((self.h_size, self.h_size), self.ini, k2)
+        self.parameters['Wy'] = Parameter((self.h_size, self.emb_size), self.ini, k3)
+        self.parameters['bh'] = Parameter((1, self.h_size), initialization=None, seed_key=None, is_bias=True)
+        self.parameters['by'] = Parameter((1, self.emb_size), initialization=None, seed_key=None, is_bias=True)
+
+    @staticmethod
+    def _rnn_forward(X, h0, Wx, Wh, Wy, bh, by, tanh_forward):
+        """
+        Static forward pass for jax.jit
+        X: (seq_len, batch, emb_dim)
+        h0: (batch, hidden_dim)
+        """
+        seq_len = X.shape[0]
+        batch_size = X.shape[1]
+        h_states = [h0]
+        out_states = []
+        inp_states = []
+        for t in range(seq_len):
+            x_t = X[t]
+            H_next = tanh_forward(h_states[-1] @ Wh + x_t @ Wx + bh)
+            out_t = H_next @ Wy + by
+            h_states.append(H_next)
+            out_states.append(out_t)
+            inp_states.append(x_t)
+
+        
+        h_states = jnp.stack(h_states, axis=0)
+        out_states = jnp.stack(out_states, axis=0)
+        inp_states =  jnp.stack(inp_states, axis=0)
+        return h_states, out_states, inp_states
+
+    def forward(self, X, inference=False):
+        """
+        X: (batch, seq_len, emb_dim)
+        """
+        # Clear states
+        self.inp_states = []
+        self.out_states = []
+        self.h_states = [jnp.zeros((self.batch_size, self.h_size))]
+
+        # transpose for time-major
+        X_t = jnp.transpose(X, (1, 0, 2))  # (seq_len, batch, emb_dim)
+        self.seq_len = int(X_t.shape[0])
+        # call jitted static forward
+        h_states, out_states, inp_states = self._rnn_forward(
+            X_t, self.h_states[0],
+            self.parameters['Wx'].param,
+            self.parameters['Wh'].param,
+            self.parameters['Wy'].param,
+            self.parameters['bh'].param,
+            self.parameters['by'].param,
+            self.tanh.forward
+        )
+
+        self.inp_states.extend([inp_states[t] for t in range(inp_states.shape[0])])
+        self.h_states.extend([h_states[t] for t in range(h_states.shape[0])])
+        self.out_states.extend([out_states[t] for t in range(out_states.shape[0])])
+
+        out_states_t = jnp.transpose(out_states, (1,0,2))  # (batch, seq_len, emb_dim)
+
+        if inference:
+            return out_states_t[:, -1, :]
+        return out_states_t.reshape(self.batch_size*self.seq_len, self.emb_size)
+
+    @staticmethod
+    def _rnn_backward(out_grad, h_states, inp_states, Wx, Wh, Wy, bh, by, tanh_backward):
+        """
+        Static backward pass for jax.jit
+        out_grad: (seq_len, batch, emb_dim)
+        h_states: list of h at each step (seq_len, batch, hidden)
+        inp_states: list of inputs at each step (seq_len, batch, emb_dim)
+        """
+        seq_len, batch_size, emb_dim = out_grad.shape
+        hidden_dim = h_states[0].shape[1]
+
+        dWx = jnp.zeros((inp_states[0].shape[1], hidden_dim))
+        dWh = jnp.zeros((hidden_dim, hidden_dim))
+        dWy = jnp.zeros((hidden_dim, emb_dim))
+        dbh = jnp.zeros((1, hidden_dim))
+        dby = jnp.zeros((1, emb_dim))
+        dh_next = jnp.zeros((batch_size, hidden_dim))
+        dL_dinput = []
+        for t in reversed(range(seq_len)):
+            dWy += h_states[t].T @ out_grad[t]
+            dby += jnp.sum(out_grad[t], axis=0, keepdims=True)
+            dht = out_grad[t] @ Wy.T + dh_next
+            dth = tanh_backward(dht)  # h_states[t] pre-activation can be passed if needed
+            dWx += inp_states[t].T @ dth
+            dWh += h_states[t-1].T @ dth
+            dbh += jnp.sum(dth, axis=0, keepdims=True)
+            dh_next = dth @ Wh
+            dL_dinput.append(dth @ Wx.T)
+
+        grads = {
+            'Wx': dWx,
+            'Wh': dWh,
+            'Wy': dWy,
+            'bh': dbh,
+            'by': dby
+        }
+        return grads, jnp.array(dL_dinput)
+
+    def backward(self, out_grad):
+        """
+        out_grad: (batch*seq_len, emb_dim)
+        """
+        out_grad = out_grad.reshape(self.batch_size, self.seq_len, self.emb_size)
+        out_grad = jnp.transpose(out_grad, (1, 0, 2))  # (seq_len, batch, emb_dim)
+
+        # Call static jitted backward
+        grads, dL_dinput = self._rnn_backward(
+            out_grad,
+            jnp.stack(self.h_states[1:], axis=0),
+            jnp.stack(self.inp_states, axis=0),
+            self.parameters['Wx'].param,
+            self.parameters['Wh'].param,
+            self.parameters['Wy'].param,
+            self.parameters['bh'].param,
+            self.parameters['by'].param,
+            self.tanh.backward
+        )
+
+        # Assign grads to parameters
+        for key in grads:
+            self.parameters[key].grad = grads[key]
+
+        return grads, dL_dinput
 
 #-------------------------------------------------------------------------- ACTIVATION LAYERS -------------------------------------------------------------------------------------------------
         

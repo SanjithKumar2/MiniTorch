@@ -1,4 +1,4 @@
-import jax.numpy as np
+import jax.numpy as jnp
 from MiniTorch.core.baseclasses import Optimizer, ComputationNode
 from MiniTorch.nets.base import Net
 from MiniTorch.nets.layers import Linear, PReLU
@@ -50,6 +50,7 @@ class AdaGrad(Optimizer):
         self.lr = lr
         self.net = net
         self.epsilon = epsilon
+        self.clear()
     
     def step(self, ini_grad):
         self.net.backward(ini_grad)

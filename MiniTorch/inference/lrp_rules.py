@@ -3,8 +3,7 @@ import jax.numpy as jnp
 from MiniTorch.nets.layers import ReLU, Linear, Conv2D
 import warnings
 from MiniTorch.inference.utils import _conv_forward, _conv_transpose
-import torch
-import torch.nn.functional as F
+import jax.lax as L
 #LRP Rules
 
 #Dummy Rule
@@ -50,14 +49,13 @@ def _lrp_lin_backward_sp_rule_bias(input, R_out, W, b, w_eps=0.0, z_eps=0.0, **k
     return R_in
 
 #LRP for Conv2D
-def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), padding=0,**kwargs):
+def _lrp_conv_backward_ep_rule(input, R_out, W, z_eps=0.0, stride=(1,1), padding='VALID',**kwargs):
     z = _conv_forward(input,W,stride,padding)
     z += 1e-12 + z_eps * jnp.sign(z)
     S = R_out/z
-    input, S, W = torch.tensor(input), torch.tensor(S), torch.tensor(W)
-    S_w = F.conv_transpose2d(S,W,stride=stride,padding=padding)
+    S_w = L.conv_transpose(S, W, stride, padding, dimension_numbers=('NCHW','OIHW','NCHW'), transpose_kernel=True)
     R_in = input * S_w
-    return jnp.array(R_in.numpy())
+    return R_in
 
 def _lrp_conv_backward_zb_rule(input, R_out, W, stride=(1,1), padding=0, mean=0., std=1., **kwargs):
     w_p = jnp.maximum(0,W)
@@ -66,12 +64,11 @@ def _lrp_conv_backward_zb_rule(input, R_out, W, stride=(1,1), padding=0, mean=0.
     H = jnp.zeros_like(input) + (1.-mean)/std
     z = _conv_forward(input, W, stride, padding) - _conv_forward(L, w_p,stride, padding) - _conv_forward(H, w_n,stride, padding) + 1e-12
     S = R_out/z
-    input, S, W, w_p, w_n, L, H = torch.tensor(input), torch.tensor(S), torch.tensor(W), torch.tensor(w_p),torch.tensor(w_n),torch.tensor(L),torch.tensor(H)
-    S_w = F.conv_transpose2d(S, W, stride=stride, padding=padding)
-    S_wp = F.conv_transpose2d(S, w_p, stride=stride, padding=padding)
-    S_wn = F.conv_transpose2d(S, w_n, stride=stride, padding=padding)
+    S_w = L.conv_transpose(S, W, stride, padding, dimension_numbers=('NCHW','OIHW','NCHW'), transpose_kernel=True)
+    S_wp = L.conv_transpose(S, w_p, stride, padding, dimension_numbers=('NCHW','OIHW','NCHW'), transpose_kernel=True)
+    S_wn = L.conv_transpose(S, w_n, stride, padding, dimension_numbers=('NCHW','OIHW','NCHW'), transpose_kernel=True)
     R_in = input*S_w - L*S_wp - H*S_wn
-    return jnp.array(R_in.numpy())
+    return R_in
 
 
 
