@@ -191,7 +191,8 @@ class Conv2D(ComputationNode):
             W,
             strides=stride,
             padding=padding,
-            dimension_numbers=('NCHW', 'IOHW', 'NCHW')
+            dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
+            transpose_kernel=True
         )
 
         return dL_dW, dL_db, dL_dinput
